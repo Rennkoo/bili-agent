@@ -101,7 +101,7 @@ function setBusy(button, busy, label) {
   if (label) button.querySelector('span:last-child').textContent = busy ? '处理中…' : label;
 }
 
-function addMessage(role, text, sources = []) {
+function addMessage(role, text, sources = [], skill = '') {
   let list = $('message-list');
   if (!list) {
     $('welcome-block')?.remove();
@@ -113,8 +113,9 @@ function addMessage(role, text, sources = []) {
   const message = document.createElement('div');
   message.className = `message ${role}`;
   const label = role === 'user' ? '' : '<div class="message-label">AI</div>';
+  const skillHtml = skill ? `<div class="answer-skill">${escapeHtml(({metadata:'元数据查询',summary:'总结理解',timeline:'时间线整理',knowledge:'知识点提取',transcript:'字幕检索',evidence_qa:'证据问答'})[skill] || skill)}</div>` : '';
   const sourceHtml = sources.length ? `<div class="source-list">${sources.map((source) => `<span class="source-chip">${escapeHtml(modalityLabel(source.modality))} · ${escapeHtml(source.page_title)} · ${formatDuration(source.start)}</span>`).join('')}</div>` : '';
-  message.innerHTML = `${label}<div class="message-bubble">${escapeHtml(text)}${sourceHtml}</div>`;
+  message.innerHTML = `${label}<div class="message-bubble">${skillHtml}${escapeHtml(text)}${sourceHtml}</div>`;
   list.appendChild(message);
   $('conversation').scrollTop = $('conversation').scrollHeight;
 }
@@ -185,7 +186,7 @@ function renderAnalysis(payload) {
     state.sessions = [{id: state.sessionId, title: state.result.metadata.title}, ...state.sessions.filter((session) => session.id !== state.sessionId)];
     renderSessions();
     renderDetails(state.result);
-    addMessage('assistant', state.result.summary.overall_summary);
+    addMessage('assistant', state.result.summary.overall_summary, [], 'summary');
     const notices = state.result.pages.filter((page) => page.transcript.source === 'none' && page.transcript.notice).map((page) => `P${page.page.page_index + 1}：${page.transcript.notice}`);
     if (notices.length) addMessage('assistant', `字幕未覆盖的分P：\n${notices.join('\n')}`);
     toast(state.result.degraded ? '分析完成，当前使用降级总结' : '分析完成');
@@ -199,7 +200,7 @@ async function ask(question) {
     const response = await fetch('/api/ask', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({session_id: state.sessionId, question}) });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || '问答失败');
-    addMessage('assistant', payload.answer.answer, payload.answer.sources || []);
+    addMessage('assistant', payload.answer.answer, payload.answer.sources || [], payload.answer.skill || 'evidence_qa');
   } catch (error) { addMessage('assistant', `处理失败：${error.message}`); }
 }
 
@@ -218,7 +219,7 @@ function switchSession(sessionId) {
   window.lastMarkdown = payload.markdown;
   $('conversation').innerHTML = '<div class="message-list" id="message-list"></div>';
   renderDetails(state.result);
-  addMessage('assistant', state.result.summary.overall_summary);
+  addMessage('assistant', state.result.summary.overall_summary, [], 'summary');
   renderSessions();
 }
 

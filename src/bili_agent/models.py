@@ -112,3 +112,4 @@ class Answer(BaseModel):
     answer: str
     sources: list[RetrievedSegment] = Field(default_factory=list)
     degraded: bool = False
+    skill: str = "evidence_qa"

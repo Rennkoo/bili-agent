@@ -18,6 +18,7 @@ from .config import Settings
 from .infographic import render_infographic
 from .markdown import render_markdown
 from .models import AnalysisResult
+from .skills import skill_label
 
 LOGGER = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).with_name("static")
@@ -28,17 +29,28 @@ SETTINGS_LOCK = threading.Lock()
 class SessionStore:
     def __init__(self):
         self._items: dict[str, AnalysisResult] = {}
+        self._history: dict[str, list[dict[str, str]]] = {}
         self._lock = threading.Lock()
 
     def put(self, result: AnalysisResult) -> str:
         session_id = uuid.uuid4().hex
         with self._lock:
             self._items[session_id] = result
+            self._history[session_id] = []
         return session_id
 
     def get(self, session_id: str) -> AnalysisResult | None:
         with self._lock:
             return self._items.get(session_id)
+
+    def history(self, session_id: str) -> list[dict[str, str]]:
+        with self._lock:
+            return list(self._history.get(session_id, []))
+
+    def add_turn(self, session_id: str, role: str, content: str) -> None:
+        with self._lock:
+            if session_id in self._history:
+                self._history[session_id].append({"role": role, "content": content})
 
 
 class JobStore:
@@ -287,7 +299,16 @@ class WebHandler(BaseHTTPRequestHandler):
             raise ValueError("分析会话不存在，请先分析一个视频。")
         if not question:
             raise ValueError("问题不能为空。")
-        answer = _run(BiliAgent(self.settings).ask(result, question))
+        history = self.store.history(session_id)
+        answer = _run(BiliAgent(self.settings).ask(result, question, history=history))
+        self.store.add_turn(session_id, "user", question)
+        self.store.add_turn(session_id, "assistant", answer.answer)
+        LOGGER.info(
+            "问答技能=%s session=%s sources=%s",
+            skill_label(answer.skill),
+            session_id[:8],
+            len(answer.sources),
+        )
         _send_json(self, {"answer": answer.model_dump(mode="json")})
 
     def _infographic(self, payload: dict) -> None:

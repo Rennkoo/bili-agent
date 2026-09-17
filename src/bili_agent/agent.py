@@ -13,6 +13,7 @@ from .multimodal import MultimodalExtractor
 from .models import AnalysisResult, Answer, EvidenceSegment, PageAnalysis
 from .parser import parse_video_input
 from .retrieval import search_evidence, search_transcripts
+from .skills import SkillRoute, classify_question, expand_with_history
 
 LOGGER = logging.getLogger(__name__)
 
@@ -98,21 +99,43 @@ class BiliAgent:
         timeline.sort(key=lambda item: (item.page_index, item.start, item.modality))
         return AnalysisResult(metadata=metadata, pages=pages, summary=summary, timeline=timeline, degraded=self.llm.degraded)
 
-    async def ask(self, result: AnalysisResult, question: str, top_k: int = 5) -> Answer:
+    async def ask(
+        self,
+        result: AnalysisResult,
+        question: str,
+        top_k: int = 5,
+        history: list[dict[str, str]] | None = None,
+    ) -> Answer:
         if not question.strip():
             raise ValueError("问题不能为空。")
-        hits = search_evidence(result.timeline, question, top_k=top_k) if result.timeline else search_transcripts([item.transcript for item in result.pages], question, top_k=top_k)
+        route = classify_question(question)
+        direct_answer = self._direct_answer(result, route)
+        if direct_answer is not None:
+            return Answer(
+                question=question,
+                answer=direct_answer,
+                sources=[],
+                degraded=result.degraded,
+                skill=route.name,
+            )
+
+        retrieval_question = expand_with_history(question, history)
+        hits = search_evidence(result.timeline, retrieval_question, top_k=top_k) if result.timeline else search_transcripts([item.transcript for item in result.pages], retrieval_question, top_k=top_k)
         if not hits:
             return Answer(
                 question=question,
                 answer="字幕中没有检索到与问题明显相关的片段，无法可靠回答。",
                 sources=[],
                 degraded=True,
+                skill=route.name,
             )
         context = "\n".join(
             f"[{hit.modality} · {hit.page_title} {format_timestamp(hit.start)}] {hit.text}" for hit in hits
         )
-        answer_text = await self.llm.answer(question, context, result.summary)
+        history_text = "\n".join(
+            f"{item.get('role', 'user')}: {item.get('content', '')}" for item in (history or [])[-4:]
+        )
+        answer_text = await self.llm.answer(question, context, result.summary, history=history_text)
         used_llm = bool(answer_text)
         if not answer_text:
             answer_text = "根据检索到的字幕片段：\n" + "\n".join(
@@ -128,4 +151,33 @@ class BiliAgent:
             answer=answer_text,
             sources=hits,
             degraded=self.llm.degraded or not used_llm,
+            skill=route.name,
         )
+
+    @staticmethod
+    def _direct_answer(result: AnalysisResult, route: SkillRoute) -> str | None:
+        metadata = result.metadata
+        if route.name == "metadata":
+            published = metadata.pubdate.strftime("%Y-%m-%d") if metadata.pubdate else "未知"
+            return (
+                f"标题：{metadata.title}\nUP主：{metadata.author}\n"
+                f"发布时间：{published}\n总时长：{format_timestamp(metadata.duration_seconds)}\n"
+                f"分P数：{len(metadata.pages)}\n链接：{metadata.url}"
+            )
+        if route.name == "summary":
+            return result.summary.overall_summary
+        if route.name == "timeline":
+            if not result.summary.chapters:
+                return "当前总结中没有可用的章节时间线。"
+            return "\n".join(
+                f"- {chapter.timestamp}｜{chapter.title}：{chapter.summary}"
+                for chapter in result.summary.chapters
+            )
+        if route.name == "knowledge":
+            if not result.summary.knowledge_points:
+                return "当前总结中没有提取到明确知识点。"
+            return "\n".join(
+                f"- {point.term}：{point.explanation}"
+                for point in result.summary.knowledge_points
+            )
+        return None

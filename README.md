@@ -75,3 +75,5 @@ src/bili_agent/
 更完整的安装、命令参数、配置项和故障排查请参阅 [docs/USAGE.md](docs/USAGE.md)。
 
 上线、Docker、HTTPS、Git 分支和回滚方案请参阅 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。
+
+聊天问答内置元数据查询、整体总结、章节时间线、知识点提取、字幕检索和证据问答技能；短追问会自动结合当前会话上下文进行检索。

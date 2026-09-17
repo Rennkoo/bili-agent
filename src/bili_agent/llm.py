@@ -96,7 +96,13 @@ class LLMClient:
             LOGGER.exception("视频级 LLM 总结失败，使用降级内容。")
             return self._fallback_overall(metadata, page_summaries)
 
-    async def answer(self, question: str, context: str, summary: VideoSummary) -> str | None:
+    async def answer(
+        self,
+        question: str,
+        context: str,
+        summary: VideoSummary,
+        history: str = "",
+    ) -> str | None:
         if self._client is None:
             return None
         prompt = (
@@ -104,6 +110,8 @@ class LLMClient:
             "回答简洁、具体，并在相关事实后标注 [分P标题 时间戳]。不要编造来源。\n\n"
             f"问题：{question}\n视频总结：{summary.overall_summary}\n字幕片段：\n{context}"
         )
+        if history:
+            prompt += f"\n\n最近对话上下文（只用于理解省略指代，不作为事实来源）：\n{history}"
         try:
             response = await self._client.chat.completions.create(
                 model=self.settings.llm_model,
