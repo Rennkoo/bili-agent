@@ -1,0 +1,190 @@
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+from typing import Any
+
+import httpx
+
+from .asr import ASRTranscriber, AudioDownloader
+from .config import Settings
+from .models import Caption, PageInfo, PageTranscript, VideoIdentifier, VideoMetadata
+
+LOGGER = logging.getLogger(__name__)
+
+
+def _payload(value: Any) -> Any:
+    if isinstance(value, dict) and "data" in value:
+        return value["data"]
+    return value
+
+
+def _first(value: Any, *keys: str, default: Any = None) -> Any:
+    if not isinstance(value, dict):
+        return default
+    for key in keys:
+        if value.get(key) is not None:
+            return value[key]
+    return default
+
+
+class BilibiliClient:
+    def __init__(self, settings: Settings):
+        self.settings = settings
+
+    async def fetch_metadata(self, identifier: VideoIdentifier) -> tuple[VideoMetadata, Any]:
+        try:
+            from bilibili_api import Credential, video
+        except ImportError as exc:
+            raise RuntimeError("缺少 bilibili-api-python，请先执行 pip install -e .") from exc
+
+        credential = Credential(**self.settings.bili_cookies) if self.settings.bili_cookies else Credential()
+        bili_video = video.Video(bvid=identifier.value, credential=credential) if identifier.kind == "bvid" else video.Video(aid=int(identifier.value), credential=credential)
+        raw_info = _payload(await bili_video.get_info())
+        try:
+            raw_pages = _payload(await bili_video.get_pages())
+        except Exception:
+            LOGGER.exception("获取分P列表失败，将尝试使用视频详情中的 pages 字段。")
+            raw_pages = raw_info.get("pages", []) if isinstance(raw_info, dict) else []
+
+        page_values = raw_pages.get("pages", raw_pages) if isinstance(raw_pages, dict) else raw_pages
+        if not page_values:
+            page_values = raw_info.get("pages", [])
+        if not page_values and isinstance(raw_info, dict) and raw_info.get("cid"):
+            page_values = [{
+                "page": 1,
+                "cid": raw_info["cid"],
+                "part": raw_info.get("title") or "第 1 P",
+                "duration": raw_info.get("duration", 0),
+            }]
+        pages = [
+            PageInfo(
+                page_index=int(_first(item, "page", default=index)) - 1,
+                cid=int(item["cid"]),
+                title=_first(item, "part", "title", default=f"第 {index + 1} P") or f"第 {index + 1} P",
+                duration_seconds=int(_first(item, "duration", default=0) or 0),
+            )
+            for index, item in enumerate(page_values or [])
+        ]
+        pages = [page.model_copy(update={"page_index": max(page.page_index, 0)}) for page in pages]
+        owner = raw_info.get("owner", {}) if isinstance(raw_info, dict) else {}
+        pubdate = _first(raw_info, "pubdate")
+        published = datetime.fromtimestamp(int(pubdate), tz=timezone.utc) if pubdate else None
+        metadata = VideoMetadata(
+            bvid=str(_first(raw_info, "bvid", default=getattr(bili_video, "get_bvid", lambda: "")())),
+            aid=int(_first(raw_info, "aid", default=getattr(bili_video, "get_aid", lambda: 0)())),
+            title=str(_first(raw_info, "title", default=identifier.value)),
+            author=str(_first(owner, "name", default="未知")),
+            pubdate=published,
+            duration_seconds=int(_first(raw_info, "duration", default=sum(page.duration_seconds for page in pages)) or 0),
+            description=str(_first(raw_info, "desc", "description", default="") or ""),
+            pic=str(_first(raw_info, "pic", default="") or "") or None,
+            pages=pages,
+            url=identifier.canonical_url,
+        )
+        return metadata, bili_video
+
+    async def fetch_transcripts(
+        self,
+        metadata: VideoMetadata,
+        bili_video: Any,
+        asr_enabled: bool,
+        asr_transcriber: ASRTranscriber | None = None,
+        audio_downloader: AudioDownloader | None = None,
+        asr_notice: str | None = None,
+    ) -> list[PageTranscript]:
+        transcripts: list[PageTranscript] = []
+        for page in metadata.pages:
+            segments = await self._fetch_cc(metadata, bili_video, page)
+            if segments:
+                transcripts.append(PageTranscript(page=page, source="cc", segments=segments))
+                continue
+
+            if asr_enabled and asr_transcriber and audio_downloader:
+                try:
+                    page_url = f"{metadata.url}{'&' if '?' in metadata.url else '?'}p={page.page_index + 1}"
+                    audio = await audio_downloader.download(page_url, page)
+                    asr_segments = await asr_transcriber.transcribe(audio)
+                    transcripts.append(PageTranscript(page=page, source="asr", segments=asr_segments))
+                    continue
+                except Exception:
+                    LOGGER.exception("第 %s P 的 ASR 失败，保留无字幕状态。", page.page_index + 1)
+
+            notice = asr_notice or "该分P没有可用 CC 字幕；ASR 默认未启用。"
+            transcripts.append(PageTranscript(page=page, source="none", notice=notice))
+            LOGGER.warning("第 %s P 没有可用 CC 字幕。", page.page_index + 1)
+        return transcripts
+
+    async def _fetch_cc(self, metadata: VideoMetadata, bili_video: Any, page: PageInfo) -> list[Caption]:
+        # Newer/forked releases may expose a player helper; use it when present.
+        for method_name in ("get_player_info", "get_player_v2", "get_subtitle"):
+            method = getattr(bili_video, method_name, None)
+            if method is None:
+                continue
+            try:
+                raw = await method(cid=page.cid, page_index=page.page_index)
+                segments = await self._subtitle_segments_from_player(raw)
+                if segments:
+                    return segments
+            except (TypeError, AttributeError, KeyError):
+                continue
+            except Exception:
+                LOGGER.debug("bilibili-api-python 的 %s 字幕 helper 调用失败。", method_name, exc_info=True)
+
+        params = {"bvid": metadata.bvid, "aid": metadata.aid, "cid": page.cid}
+        headers = {"Referer": metadata.url, "User-Agent": "Mozilla/5.0 bili-agent/0.1"}
+        try:
+            async with httpx.AsyncClient(timeout=20, headers=headers, cookies=self.settings.bili_cookies) as client:
+                response = await client.get("https://api.bilibili.com/x/player/v2", params=params)
+                response.raise_for_status()
+                raw = response.json()
+            return await self._subtitle_segments_from_player(raw)
+        except (httpx.HTTPError, ValueError) as exc:
+            LOGGER.warning("第 %s P 获取 CC 字幕失败: %s", page.page_index + 1, exc)
+            return []
+
+    async def _subtitle_segments_from_player(self, raw: Any) -> list[Caption]:
+        data = _payload(raw)
+        if isinstance(data, list):
+            return self._parse_caption_entries(data)
+        if isinstance(data, dict) and "body" in data:
+            return self._parse_caption_entries(data["body"])
+        subtitle = data.get("subtitle", {}) if isinstance(data, dict) else {}
+        refs = subtitle.get("subtitles", []) if isinstance(subtitle, dict) else []
+        if isinstance(refs, dict):
+            refs = [refs]
+        for ref in refs:
+            url = ref.get("subtitle_url") or ref.get("url") if isinstance(ref, dict) else None
+            if not url:
+                continue
+            if str(url).startswith("//"):
+                url = "https:" + str(url)
+            try:
+                headers = {"User-Agent": "Mozilla/5.0 bili-agent/0.1"}
+                async with httpx.AsyncClient(
+                    timeout=20, headers=headers, cookies=self.settings.bili_cookies
+                ) as client:
+                    response = await client.get(str(url))
+                    response.raise_for_status()
+                    body = response.json()
+                entries = body.get("body", body) if isinstance(body, dict) else body
+                return self._parse_caption_entries(entries)
+            except (httpx.HTTPError, ValueError, TypeError) as exc:
+                LOGGER.warning("下载字幕资源失败: %s", exc)
+        return []
+
+    @staticmethod
+    def _parse_caption_entries(entries: Any) -> list[Caption]:
+        if not isinstance(entries, list):
+            return []
+        result: list[Caption] = []
+        for item in entries:
+            if not isinstance(item, dict):
+                continue
+            text = str(_first(item, "content", "text", default="") or "").strip()
+            if not text:
+                continue
+            start = float(_first(item, "from", "start", default=0) or 0)
+            end = float(_first(item, "to", "end", default=start) or start)
+            result.append(Caption(start=max(start, 0), end=max(end, start), text=text))
+        return result

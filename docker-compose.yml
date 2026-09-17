@@ -1,0 +1,29 @@
+services:
+  bili-agent:
+    build:
+      context: .
+    image: bili-agent:local
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      ASR_CACHE_DIR: /data/audio
+      MEDIA_CACHE_DIR: /data/media
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - bili-agent-data:/data
+      - ./.env:/app/.env
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/api/health', timeout=5)
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  bili-agent-data:

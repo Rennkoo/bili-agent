@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111713">
+  <title>bili-agent · 视频研究台</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar left-rail">
+      <div class="brand"><span class="brand-mark">b</span><span>bili-agent</span></div>
+      <button class="new-session" id="new-session"><span aria-hidden="true">+</span> 新建分析</button>
+      <nav class="nav-list" aria-label="主导航">
+        <a class="nav-item active" href="#"><span>◌</span> 视频分析</a>
+        <a class="nav-item" href="#notes"><span>▤</span> 已保存笔记 <span class="nav-count">0</span></a>
+      </nav>
+      <div class="rail-label">最近会话</div>
+      <div id="session-list" class="session-list">
+        <div class="session-empty">还没有分析记录</div>
+      </div>
+      <div class="sidebar-footer">
+        <div class="status-line"><span class="status-dot"></span><span>本地运行</span></div>
+        <div class="version">v0.1.0</div>
+      </div>
+    </aside>
+
+    <main class="main-stage">
+      <header class="topbar">
+        <div class="mobile-brand"><span class="brand-mark">b</span> bili-agent</div>
+        <div class="breadcrumb"><span>视频分析</span><span class="slash">/</span><strong id="crumb-title">新会话</strong></div>
+        <div class="top-actions">
+          <button class="icon-button" id="download-note" title="下载 Markdown 笔记" aria-label="下载 Markdown 笔记">↓</button>
+          <button class="icon-button" id="generate-infographic" title="生成一图流" aria-label="生成一图流">▦</button>
+          <button class="icon-button" id="settings-button" title="配置 LLM API" aria-label="配置 LLM API">⚙</button>
+          <button class="icon-button" id="toggle-inspector" title="显示或隐藏详情" aria-label="显示或隐藏详情">◫</button>
+        </div>
+      </header>
+
+      <section class="chat-layout">
+        <div class="chat-column">
+          <div class="conversation" id="conversation">
+            <div class="welcome-block" id="welcome-block">
+              <div class="welcome-kicker">VIDEO RESEARCH DESK</div>
+              <h1>把一个视频，<br><em>变成你的知识库。</em></h1>
+              <p>输入一个链接，开始这段视频研究。</p>
+              <div class="starter-row">
+                <button class="starter" data-question="这个视频主要讲了什么？">概括这个视频 <span>↗</span></button>
+                <button class="starter" data-question="视频中最重要的三个知识点是什么？">提取知识点 <span>↗</span></button>
+              </div>
+            </div>
+          </div>
+
+          <div class="composer-wrap">
+            <div class="composer-hint" id="composer-hint">先输入视频链接，建立分析会话</div>
+            <form class="composer" id="composer-form">
+              <input id="video-input" class="video-input" placeholder="粘贴 Bilibili 链接、BV 号或 av 号" autocomplete="off">
+              <button class="analyze-button" id="analyze-button" type="submit" aria-label="开始分析"><span class="button-icon">→</span><span>开始分析</span></button>
+            </form>
+            <form class="question-form hidden" id="question-form">
+              <textarea id="question-input" rows="1" placeholder="针对字幕内容提问…"></textarea>
+              <button class="send-button" type="submit" title="发送问题" aria-label="发送问题">↑</button>
+            </form>
+            <div class="composer-meta"><span>CC 字幕优先</span><span>·</span><span>回答带时间戳来源</span><span class="shortcut">Enter ↵</span></div>
+            <label class="asr-toggle"><input id="asr-enabled" type="checkbox" checked><span>无字幕时自动使用音频转写</span><span class="asr-note">需要 faster-whisper + ffmpeg</span></label>
+            <label class="asr-toggle"><input id="multimodal-enabled" type="checkbox"><span>分析关键帧、画面文字和视觉内容</span><span class="asr-note">需要 vision 依赖或视觉模型</span></label>
+          </div>
+        </div>
+
+        <aside class="inspector" id="inspector">
+          <div class="inspector-head"><span>分析详情</span><button class="close-inspector" id="close-inspector" aria-label="关闭详情">×</button></div>
+          <div id="video-card" class="video-card empty-card">
+            <div class="video-cover placeholder-cover"><span>BV</span></div>
+            <div class="empty-title">等待一个视频</div>
+            <div class="empty-copy">分析完成后，这里会显示视频信息和章节。</div>
+          </div>
+          <div id="metadata-block" class="metadata-block hidden"></div>
+          <div class="inspector-section" id="summary-section">
+            <div class="section-title"><span>整体概述</span><span class="section-line"></span></div>
+            <div id="summary-text" class="summary-text muted">暂无内容</div>
+          </div>
+          <div class="inspector-section">
+            <div class="section-title"><span>章节时间线</span><span id="chapter-count" class="section-count">0</span></div>
+            <div id="chapter-list" class="chapter-list"><div class="muted">分析后显示章节</div></div>
+          </div>
+          <div class="inspector-section">
+            <div class="section-title"><span>证据时间线</span><span id="evidence-count" class="section-count">0</span></div>
+            <div id="evidence-list" class="evidence-list"><div class="muted">分析后显示字幕、ASR、OCR 和视觉证据</div></div>
+          </div>
+        </aside>
+      </section>
+    </main>
+  </div>
+  <div class="modal-backdrop hidden" id="infographic-modal" role="dialog" aria-modal="true" aria-labelledby="infographic-title">
+    <section class="infographic-modal">
+      <div class="settings-head"><div><div class="settings-kicker">VISUAL BRIEF</div><h2 id="infographic-title">一图流</h2></div><button class="close-inspector" id="close-infographic" type="button" aria-label="关闭一图流">×</button></div>
+      <div class="infographic-preview"><img id="infographic-image" alt="视频一图流"></div>
+      <div class="settings-actions"><button class="secondary-button" id="close-infographic-secondary" type="button">关闭</button><button class="save-settings" id="download-infographic" type="button">下载 SVG 图片</button></div>
+    </section>
+  </div>
+  <div class="modal-backdrop hidden" id="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <form class="settings-modal" id="settings-form">
+      <div class="settings-head"><div><div class="settings-kicker">MODEL CONNECTION</div><h2 id="settings-title">配置 LLM API</h2></div><button class="close-inspector" id="close-settings" type="button" aria-label="关闭设置">×</button></div>
+      <p class="settings-copy">设置只保存在本机项目的 <code>.env</code> 文件中，用于总结、问答和视觉分析。</p>
+      <label class="settings-field"><span>API Key</span><input id="llm-api-key" type="password" autocomplete="new-password" placeholder="输入新的 API Key；留空保持不变"></label>
+      <label class="settings-field"><span>Base URL</span><input id="llm-base-url" type="url" placeholder="https://api.openai.com/v1"></label>
+      <label class="settings-field"><span>模型名</span><input id="llm-model" type="text" placeholder="gpt-4o-mini"></label>
+      <label class="clear-key"><input id="clear-api-key" type="checkbox"><span>清除当前 API Key，使用降级模式</span></label>
+      <div class="settings-status" id="settings-status"></div>
+      <div class="settings-actions"><button class="secondary-button" id="cancel-settings" type="button">取消</button><button class="save-settings" type="submit">保存配置</button></div>
+    </form>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
