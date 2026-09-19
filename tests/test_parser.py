@@ -18,3 +18,8 @@ def test_parse_av():
 def test_reject_unknown_input():
     with pytest.raises(InputParseError):
         parse_video_input("https://example.com/video/123")
+
+
+def test_reject_bvid_embedded_in_foreign_url():
+    with pytest.raises(InputParseError):
+        parse_video_input("https://example.com/video/BV1xx411c7mD")
