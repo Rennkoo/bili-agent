@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from bili_agent.config import Settings
 from bili_agent.llm import LLMClient
 from bili_agent.markdown import render_markdown
-from bili_agent.models import AnalysisResult, Caption, EvidenceSegment, PageAnalysis, PageInfo, PageTranscript, VideoMetadata
+from bili_agent.models import AnalysisResult, Caption, EvidenceSegment, PageAnalysis, PageInfo, PageTranscript, VideoMetadata, VideoSummary
 
 
 def _settings() -> Settings:
@@ -87,3 +87,30 @@ def test_markdown_contains_metadata_timestamps_and_missing_caption_notice():
     assert "该分P没有可用 CC 字幕" in markdown
     assert "多模态证据时间线" in markdown
     assert "画面文字：缓存策略" in markdown
+
+
+def test_fallback_overall_chapters_use_global_timestamps():
+    page_one = PageInfo(page_index=0, cid=123, title="第一部分", duration_seconds=90)
+    page_two = PageInfo(page_index=1, cid=456, title="第二部分", duration_seconds=45)
+    metadata = VideoMetadata(
+        bvid="BV1xx411c7mD",
+        aid=170001,
+        title="测试视频",
+        pages=[page_one, page_two],
+        duration_seconds=135,
+        url="https://www.bilibili.com/video/BV1xx411c7mD",
+    )
+    summaries = [
+        VideoSummary(
+            video_title="第一部分",
+            overall_summary="一",
+            chapters=[{"timestamp": "00:00:10", "title": "一", "summary": "一"}],
+        ),
+        VideoSummary(
+            video_title="第二部分",
+            overall_summary="二",
+            chapters=[{"timestamp": "00:00:05", "title": "二", "summary": "二"}],
+        ),
+    ]
+    overall = LLMClient._fallback_overall(metadata, summaries)
+    assert [chapter.timestamp for chapter in overall.chapters] == ["00:00:10", "00:01:35"]

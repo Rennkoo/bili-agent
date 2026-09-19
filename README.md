@@ -13,7 +13,7 @@ python -m pip install -e .
 Copy-Item .env.example .env
 ```
 
-将 `.env` 中的 `LLM_API_KEY`、`LLM_BASE_URL` 和 `LLM_MODEL` 配置为 OpenAI 或其他 OpenAI 兼容服务。没有 `LLM_API_KEY` 时仍可运行，程序会使用字幕原文截断生成降级总结，并明确提示。
+将 `.env` 中的 `LLM_API_KEY`、`LLM_BASE_URL` 和 `LLM_MODEL` 配置为 OpenAI 或其他 OpenAI 兼容服务。没有 `LLM_API_KEY` 时仍可运行，程序会使用已有字幕、ASR 或视觉证据截断生成降级总结，并明确提示。
 
 部分 B 站字幕需要登录态，可在 `.env` 中填写 `BILI_SESSDATA`、`BILI_BILI_JCT` 和 `BILI_BUVID3`。请勿把包含真实 Cookie 的 `.env` 提交到版本库。
 

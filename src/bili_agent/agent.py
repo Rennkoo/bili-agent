@@ -175,7 +175,7 @@ class BiliAgent:
         answer_text = await self.llm.answer(question, context, result.summary, history=history_text)
         used_llm = bool(answer_text)
         if not answer_text:
-            answer_text = "根据检索到的字幕片段：\n" + "\n".join(
+            answer_text = "根据检索到的内容证据片段：\n" + "\n".join(
                 f"- [P{hit.page_index + 1} {hit.page_title} {_timestamp_range(hit.global_start if hit.global_start is not None else hit.start, hit.global_end if hit.global_end is not None else hit.end)}] {hit.text}" for hit in hits
             )
         citations = "；".join(

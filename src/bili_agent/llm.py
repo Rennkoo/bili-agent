@@ -19,6 +19,17 @@ def format_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
+def _parse_timestamp(value: str) -> int | None:
+    parts = [part for part in value.strip().split(":") if part.isdigit()]
+    if len(parts) == 3:
+        hours, minutes, seconds = (int(part) for part in parts)
+        return hours * 3600 + minutes * 60 + seconds
+    if len(parts) == 2:
+        minutes, seconds = (int(part) for part in parts)
+        return minutes * 60 + seconds
+    return None
+
+
 class LLMClient:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -59,12 +70,13 @@ class LLMClient:
         if self._client is None:
             return self._fallback_summary(page, transcript, evidence)
         prompt = (
-            "请分析以下 B 站视频分P字幕。只输出合法 JSON，不要 Markdown 代码围栏，字段必须为 "
+            "请分析以下 B 站视频分P内容证据。证据可能来自 CC 字幕、ASR、OCR 或视觉分析。"
+            "只输出合法 JSON，不要 Markdown 代码围栏，字段必须为 "
             "video_title、overall_summary、chapters、knowledge_points。chapters 每项包含 "
             "timestamp、title、summary、key_points；knowledge_points 每项包含 term、explanation。"
-            "overall_summary 约 200 字，必须忠实于字幕，不要臆造。\n\n"
-            f"分P标题：{page.title}\n字幕：\n{self._clip(transcript.text)}\n"
-            f"补充的 OCR/视觉证据：\n{self._clip(evidence_text)}"
+            "overall_summary 约 200 字，必须忠实于提供的内容证据，不要臆造。\n\n"
+            f"分P标题：{page.title}\n字幕或 ASR：\n{self._clip(transcript.text)}\n"
+            f"OCR/视觉证据：\n{self._clip(evidence_text)}"
         )
         try:
             data = await self._chat_json(prompt)
@@ -78,13 +90,24 @@ class LLMClient:
     ) -> VideoSummary:
         if self._client is None:
             return self._fallback_overall(metadata, page_summaries)
-        digest = "\n\n".join(
-            f"分P {index + 1}《{summary.video_title}》：{summary.overall_summary}"
-            for index, summary in enumerate(page_summaries)
-        )
+        offset = 0
+        digest_parts = []
+        for index, summary in enumerate(page_summaries):
+            page = metadata.pages[index] if index < len(metadata.pages) else None
+            local_chapters = "；".join(
+                f"{chapter.timestamp} {chapter.title}" for chapter in summary.chapters
+            ) or "无明确章节"
+            digest_parts.append(
+                f"分P {index + 1}《{summary.video_title}》（全局起点 {format_timestamp(offset)}，"
+                f"本P时长 {format_timestamp(page.duration_seconds if page else 0)}）："
+                f"{summary.overall_summary}\n本P章节（时间戳为本P相对时间）：{local_chapters}"
+            )
+            offset += page.duration_seconds if page else 0
+        digest = "\n\n".join(digest_parts)
         prompt = (
             "请把以下各分P总结合并成一个视频级总结，只输出合法 JSON，不要 Markdown 代码围栏。"
-            "字段必须为 video_title、overall_summary、chapters、knowledge_points；章节必须保留或合理合并时间戳，"
+            "字段必须为 video_title、overall_summary、chapters、knowledge_points；章节必须保留或合理合并时间戳。"
+            "请将 chapters.timestamp 统一输出为相对于整个视频的全局时间，不要输出本P相对时间；"
             "每项包含 timestamp、title、summary、key_points；知识点每项包含 term、explanation。"
             "overall_summary 约 200 字。\n\n"
             f"视频标题：{metadata.title}\n{self._clip(digest)}"
@@ -106,9 +129,10 @@ class LLMClient:
         if self._client is None:
             return None
         prompt = (
-            "你是视频内容问答助手。仅依据提供的字幕片段和总结回答，不能确定时明确说不知道。"
+            "你是视频内容问答助手。仅依据提供的内容证据片段（字幕、ASR、OCR、视觉分析）和总结回答，"
+            "不能确定时明确说不知道。"
             "回答简洁、具体，并在相关事实后标注 [分P标题 时间戳]。不要编造来源。\n\n"
-            f"问题：{question}\n视频总结：{summary.overall_summary}\n字幕片段：\n{context}"
+            f"问题：{question}\n视频总结：{summary.overall_summary}\n内容证据片段：\n{context}"
         )
         if history:
             prompt += f"\n\n最近对话上下文（只用于理解省略指代，不作为事实来源）：\n{history}"
@@ -195,19 +219,31 @@ class LLMClient:
         first = transcript.segments[0].start if transcript.segments else (evidence[0].start if evidence else 0)
         return VideoSummary(
             video_title=page.title,
-            overall_summary=f"[降级内容] 未配置 LLM_API_KEY，以下为字幕原文截断：{snippet}",
-            chapters=[Chapter(timestamp=format_timestamp(first), title="字幕原文摘录", summary=snippet, key_points=[])],
+            overall_summary=f"[降级内容] 未配置 LLM_API_KEY，以下为视频内容证据截断：{snippet}",
+            chapters=[Chapter(timestamp=format_timestamp(first), title="内容证据摘录", summary=snippet, key_points=[])],
             knowledge_points=[],
         )
 
     @staticmethod
     def _fallback_overall(metadata: VideoMetadata, page_summaries: list[VideoSummary]) -> VideoSummary:
         text = "\n\n".join(summary.overall_summary for summary in page_summaries)
-        chapters = [chapter for summary in page_summaries for chapter in summary.chapters]
+        chapters = []
+        offset = 0
+        for index, summary in enumerate(page_summaries):
+            for chapter in summary.chapters:
+                local_seconds = _parse_timestamp(chapter.timestamp)
+                timestamp = (
+                    format_timestamp(offset + local_seconds)
+                    if local_seconds is not None
+                    else chapter.timestamp
+                )
+                chapters.append(chapter.model_copy(update={"timestamp": timestamp}))
+            if index < len(metadata.pages):
+                offset += metadata.pages[index].duration_seconds
         points = [point for summary in page_summaries for point in summary.knowledge_points]
         return VideoSummary(
             video_title=metadata.title,
-            overall_summary=f"[降级内容] 未配置 LLM_API_KEY，按分P汇总：{text[:1200]}",
+            overall_summary=f"[降级内容] 未配置 LLM_API_KEY，按分P内容证据汇总：{text[:1200]}",
             chapters=chapters,
             knowledge_points=points,
         )
