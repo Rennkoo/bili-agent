@@ -11,13 +11,14 @@ from dataclasses import replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 from .agent import BiliAgent
 from .config import Settings
 from .infographic import render_infographic
 from .markdown import render_markdown
 from .models import AnalysisResult
+from .parser import InputParseError, parse_video_input
 from .skills import skill_label
 
 LOGGER = logging.getLogger(__name__)
@@ -147,6 +148,7 @@ class WebHandler(BaseHTTPRequestHandler):
     store = SessionStore()
     jobs = JobStore()
     settings: Settings
+    analysis_slots = threading.BoundedSemaphore(2)
 
     def log_message(self, format: str, *args) -> None:
         LOGGER.info("web %s", format % args)
@@ -210,10 +212,19 @@ class WebHandler(BaseHTTPRequestHandler):
         video = str(payload.get("video", "")).strip()
         if not video:
             raise ValueError("请输入 Bilibili 视频链接、BV 号或 av 号。")
+        if len(video) > self.settings.max_video_input_chars:
+            raise ValueError(f"视频输入过长，最多允许 {self.settings.max_video_input_chars} 个字符。")
+        try:
+            parse_video_input(video)
+        except InputParseError as exc:
+            raise ValueError(str(exc)) from exc
         # The web workflow is designed for video understanding: transcribe only
         # when CC subtitles are unavailable, while keeping the CLI conservative.
         enable_asr = bool(payload.get("enable_asr", True))
         enable_multimodal = bool(payload.get("enable_multimodal", False))
+        if not self.analysis_slots.acquire(blocking=False):
+            _send_json(self, {"error": "当前分析任务较多，请稍后再试。"}, HTTPStatus.TOO_MANY_REQUESTS)
+            return
         job_id = self.jobs.create()
         thread = threading.Thread(
             target=self._run_analysis_job,
@@ -221,7 +232,11 @@ class WebHandler(BaseHTTPRequestHandler):
             daemon=True,
             name=f"bili-agent-{job_id[:8]}",
         )
-        thread.start()
+        try:
+            thread.start()
+        except Exception:
+            self.analysis_slots.release()
+            raise
         _send_json(self, {"job_id": job_id}, HTTPStatus.ACCEPTED)
 
     def _save_settings(self, payload: dict) -> None:
@@ -290,6 +305,8 @@ class WebHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             LOGGER.exception("后台分析任务失败。")
             self.jobs.update(job_id, status="failed", stage="failed", progress=100, message=str(exc))
+        finally:
+            self.analysis_slots.release()
 
     def _ask(self, payload: dict) -> None:
         session_id = str(payload.get("session_id", "")).strip()
@@ -299,6 +316,8 @@ class WebHandler(BaseHTTPRequestHandler):
             raise ValueError("分析会话不存在，请先分析一个视频。")
         if not question:
             raise ValueError("问题不能为空。")
+        if len(question) > self.settings.max_question_chars:
+            raise ValueError(f"问题过长，最多允许 {self.settings.max_question_chars} 个字符。")
         history = self.store.history(session_id)
         answer = _run(BiliAgent(self.settings).ask(result, question, history=history))
         self.store.add_turn(session_id, "user", question)
@@ -327,27 +346,50 @@ class WebHandler(BaseHTTPRequestHandler):
 
     def _serve_cover(self, parsed) -> None:
         remote_url = parse_qs(parsed.query).get("url", [""])[0]
-        target = urlparse(remote_url)
         allowed_hosts = ("bilibili.com", "hdslb.com")
-        hostname = (target.hostname or "").lower()
-        host_allowed = any(hostname == host or hostname.endswith("." + host) for host in allowed_hosts)
-        if target.scheme not in {"http", "https"} or not host_allowed:
+
+        def allowed(url: str) -> bool:
+            target = urlparse(url)
+            hostname = (target.hostname or "").lower().rstrip(".")
+            host_allowed = any(hostname == host or hostname.endswith("." + host) for host in allowed_hosts)
+            return target.scheme in {"http", "https"} and host_allowed
+
+        if not allowed(remote_url):
             _send_json(self, {"error": "无效的封面地址。"}, HTTPStatus.BAD_REQUEST)
             return
         try:
             import httpx
 
-            with httpx.Client(
-                timeout=15,
-                follow_redirects=True,
-                headers={"Referer": "https://www.bilibili.com/", "User-Agent": "Mozilla/5.0 bili-agent/0.1"},
-            ) as client:
-                response = client.get(remote_url)
-                response.raise_for_status()
+            current_url = remote_url
+            response = None
+            for _ in range(4):
+                if not allowed(current_url):
+                    raise ValueError("封面重定向到了不受信任的地址。")
+                with httpx.Client(
+                    timeout=15,
+                    follow_redirects=False,
+                    headers={"Referer": "https://www.bilibili.com/", "User-Agent": "Mozilla/5.0 bili-agent/0.1"},
+                ) as client:
+                    response = client.get(current_url)
+                if 300 <= response.status_code < 400:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise ValueError("封面重定向缺少目标地址。")
+                    current_url = urljoin(current_url, location)
+                    continue
+                break
+            else:
+                raise ValueError("封面重定向次数过多。")
+
+            if response is None or not allowed(str(response.url)):
+                raise ValueError("封面最终地址不受信任。")
+            response.raise_for_status()
             content_type = response.headers.get("content-type", "image/jpeg").split(";", 1)[0]
             if not content_type.startswith("image/"):
                 raise ValueError("远程资源不是图片。")
             body = response.content
+            if len(body) > self.settings.max_cover_bytes:
+                raise ValueError("封面文件过大。")
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
@@ -377,6 +419,7 @@ class WebHandler(BaseHTTPRequestHandler):
 
 def serve(settings: Settings, host: str = "127.0.0.1", port: int = 8765, open_browser: bool = False) -> None:
     WebHandler.settings = settings
+    WebHandler.analysis_slots = threading.BoundedSemaphore(settings.max_concurrent_analyses)
     server = ThreadingHTTPServer((host, port), WebHandler)
     url = f"http://{host}:{port}"
     LOGGER.info("聊天面板已启动: %s", url)

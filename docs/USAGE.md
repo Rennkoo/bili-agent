@@ -35,6 +35,10 @@ LLM_BASE_URL=https://api.openai.com/v1
 LLM_MODEL=gpt-4o-mini
 LLM_TIMEOUT_SECONDS=90
 MAX_TRANSCRIPT_CHARS=24000
+MAX_CONCURRENT_ANALYSES=2
+MAX_QUESTION_CHARS=4000
+MAX_VIDEO_INPUT_CHARS=500
+MAX_COVER_BYTES=5242880
 MULTIMODAL_ENABLED=false
 MULTIMODAL_MAX_FRAMES=6
 MEDIA_CACHE_DIR=.bili-agent/media
@@ -45,6 +49,8 @@ VISION_MODEL=
 兼容 OpenAI Chat Completions 的服务通常只需要替换 `LLM_BASE_URL` 和 `LLM_MODEL`。
 
 `LLM_TIMEOUT_SECONDS` 控制单次 LLM 请求超时；`MAX_TRANSCRIPT_CHARS` 控制发送给 LLM 的字幕最大字符数。
+
+`MAX_CONCURRENT_ANALYSES` 限制同时运行的分析任务数；`MAX_QUESTION_CHARS` 和 `MAX_VIDEO_INPUT_CHARS` 限制问答与视频输入长度；`MAX_COVER_BYTES` 限制封面代理允许下载的最大字节数。
 
 如果不配置 `LLM_API_KEY`，程序仍然可以获取视频和字幕，但总结会使用字幕原文截断作为降级内容，问答会返回检索到的字幕片段和时间戳。
 

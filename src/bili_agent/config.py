@@ -46,6 +46,10 @@ class Settings:
     multimodal_max_frames: int = 6
     media_cache_dir: Path = Path(".bili-agent/media")
     vision_model: str | None = None
+    max_concurrent_analyses: int = 2
+    max_question_chars: int = 4000
+    max_video_input_chars: int = 500
+    max_cover_bytes: int = 5 * 1024 * 1024
 
     @classmethod
     def from_env(cls, env_file: str | Path | None = None) -> "Settings":
@@ -68,6 +72,10 @@ class Settings:
             multimodal_max_frames=_as_int(os.getenv("MULTIMODAL_MAX_FRAMES"), 6, 1),
             media_cache_dir=Path(os.getenv("MEDIA_CACHE_DIR", ".bili-agent/media")),
             vision_model=os.getenv("VISION_MODEL") or None,
+            max_concurrent_analyses=_as_int(os.getenv("MAX_CONCURRENT_ANALYSES"), 2, 1),
+            max_question_chars=_as_int(os.getenv("MAX_QUESTION_CHARS"), 4000, 100),
+            max_video_input_chars=_as_int(os.getenv("MAX_VIDEO_INPUT_CHARS"), 500, 32),
+            max_cover_bytes=_as_int(os.getenv("MAX_COVER_BYTES"), 5 * 1024 * 1024, 64 * 1024),
         )
 
     @property
