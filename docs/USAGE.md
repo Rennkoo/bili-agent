@@ -40,6 +40,11 @@ MAX_QUESTION_CHARS=4000
 MAX_VIDEO_INPUT_CHARS=500
 MAX_COVER_BYTES=5242880
 WEB_AUTH_TOKEN=
+SESSION_TTL_SECONDS=86400
+MAX_SESSIONS=20
+JOB_TTL_SECONDS=86400
+MAX_JOBS=100
+MAX_HISTORY_TURNS=24
 MULTIMODAL_ENABLED=false
 MULTIMODAL_MAX_FRAMES=6
 MEDIA_CACHE_DIR=.bili-agent/media
@@ -54,6 +59,8 @@ VISION_MODEL=
 `MAX_CONCURRENT_ANALYSES` 限制同时运行的分析任务数；`MAX_QUESTION_CHARS` 和 `MAX_VIDEO_INPUT_CHARS` 限制问答与视频输入长度；`MAX_COVER_BYTES` 限制封面代理允许下载的最大字节数。
 
 `WEB_AUTH_TOKEN` 非空时，除健康检查和封面读取外的 Web API 都需要 `Authorization: Bearer <token>`。聊天面板第一次收到认证错误时会提示输入 Token，Token 只保存在当前浏览器会话。公网部署仍建议在 Caddy/Nginx 层额外启用 HTTPS 和用户认证。
+
+`SESSION_TTL_SECONDS`、`JOB_TTL_SECONDS` 控制内存数据保留时间；`MAX_SESSIONS`、`MAX_JOBS` 和 `MAX_HISTORY_TURNS` 控制会话、任务和对话历史上限。任务清理只会删除已完成或失败的旧任务，运行中的任务不会被清理。
 
 如果不配置 `LLM_API_KEY`，程序仍然可以获取视频和字幕，但总结会使用字幕原文截断作为降级内容，问答会返回检索到的字幕片段和时间戳。
 

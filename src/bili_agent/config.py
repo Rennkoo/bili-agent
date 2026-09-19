@@ -51,6 +51,11 @@ class Settings:
     max_video_input_chars: int = 500
     max_cover_bytes: int = 5 * 1024 * 1024
     web_auth_token: str | None = None
+    session_ttl_seconds: int = 24 * 60 * 60
+    max_sessions: int = 20
+    job_ttl_seconds: int = 24 * 60 * 60
+    max_jobs: int = 100
+    max_history_turns: int = 24
 
     @classmethod
     def from_env(cls, env_file: str | Path | None = None) -> "Settings":
@@ -78,6 +83,11 @@ class Settings:
             max_video_input_chars=_as_int(os.getenv("MAX_VIDEO_INPUT_CHARS"), 500, 32),
             max_cover_bytes=_as_int(os.getenv("MAX_COVER_BYTES"), 5 * 1024 * 1024, 64 * 1024),
             web_auth_token=os.getenv("WEB_AUTH_TOKEN") or None,
+            session_ttl_seconds=_as_int(os.getenv("SESSION_TTL_SECONDS"), 24 * 60 * 60, 60),
+            max_sessions=_as_int(os.getenv("MAX_SESSIONS"), 20, 1),
+            job_ttl_seconds=_as_int(os.getenv("JOB_TTL_SECONDS"), 24 * 60 * 60, 60),
+            max_jobs=_as_int(os.getenv("MAX_JOBS"), 100, 10),
+            max_history_turns=_as_int(os.getenv("MAX_HISTORY_TURNS"), 24, 2),
         )
 
     @property

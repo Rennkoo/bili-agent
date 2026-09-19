@@ -6,6 +6,7 @@ import json
 import logging
 import mimetypes
 import threading
+import time
 import uuid
 import webbrowser
 from dataclasses import replace
@@ -29,40 +30,92 @@ SETTINGS_LOCK = threading.Lock()
 
 
 class SessionStore:
-    def __init__(self):
+    def __init__(self, ttl_seconds: int = 24 * 60 * 60, max_items: int = 20, max_history_turns: int = 24):
         self._items: dict[str, AnalysisResult] = {}
         self._history: dict[str, list[dict[str, str]]] = {}
+        self._accessed: dict[str, float] = {}
+        self._ttl_seconds = max(ttl_seconds, 60)
+        self._max_items = max(max_items, 1)
+        self._max_history_turns = max(max_history_turns, 2)
         self._lock = threading.Lock()
+
+    def _purge_locked(self) -> None:
+        cutoff = time.time() - self._ttl_seconds
+        expired = [session_id for session_id, accessed in self._accessed.items() if accessed < cutoff]
+        for session_id in expired:
+            self._items.pop(session_id, None)
+            self._history.pop(session_id, None)
+            self._accessed.pop(session_id, None)
+        while len(self._items) > self._max_items:
+            oldest = min(self._accessed, key=self._accessed.get)
+            self._items.pop(oldest, None)
+            self._history.pop(oldest, None)
+            self._accessed.pop(oldest, None)
 
     def put(self, result: AnalysisResult) -> str:
         session_id = uuid.uuid4().hex
         with self._lock:
+            self._purge_locked()
             self._items[session_id] = result
             self._history[session_id] = []
+            self._accessed[session_id] = time.time()
         return session_id
 
     def get(self, session_id: str) -> AnalysisResult | None:
         with self._lock:
-            return self._items.get(session_id)
+            self._purge_locked()
+            item = self._items.get(session_id)
+            if item is not None:
+                self._accessed[session_id] = time.time()
+            return item
 
     def history(self, session_id: str) -> list[dict[str, str]]:
         with self._lock:
+            self._purge_locked()
+            if session_id in self._items:
+                self._accessed[session_id] = time.time()
             return list(self._history.get(session_id, []))
 
     def add_turn(self, session_id: str, role: str, content: str) -> None:
         with self._lock:
             if session_id in self._history:
                 self._history[session_id].append({"role": role, "content": content})
+                self._history[session_id] = self._history[session_id][-self._max_history_turns :]
+                self._accessed[session_id] = time.time()
 
 
 class JobStore:
-    def __init__(self):
+    def __init__(self, ttl_seconds: int = 24 * 60 * 60, max_items: int = 100):
         self._items: dict[str, dict] = {}
+        self._updated: dict[str, float] = {}
+        self._ttl_seconds = max(ttl_seconds, 60)
+        self._max_items = max(max_items, 10)
         self._lock = threading.Lock()
+
+    def _purge_locked(self) -> None:
+        cutoff = time.time() - self._ttl_seconds
+        terminal = {
+            job_id
+            for job_id, item in self._items.items()
+            if item.get("status") in {"completed", "failed"} and self._updated.get(job_id, 0) < cutoff
+        }
+        for job_id in terminal:
+            self._items.pop(job_id, None)
+            self._updated.pop(job_id, None)
+        while len(self._items) > self._max_items:
+            finished = [
+                job_id for job_id, item in self._items.items() if item.get("status") in {"completed", "failed"}
+            ]
+            if not finished:
+                break
+            oldest = min(finished, key=self._updated.get)
+            self._items.pop(oldest, None)
+            self._updated.pop(oldest, None)
 
     def create(self) -> str:
         job_id = uuid.uuid4().hex
         with self._lock:
+            self._purge_locked()
             self._items[job_id] = {
                 "job_id": job_id,
                 "status": "queued",
@@ -70,15 +123,19 @@ class JobStore:
                 "progress": 0,
                 "message": "等待开始",
             }
+            self._updated[job_id] = time.time()
         return job_id
 
     def update(self, job_id: str, **values) -> None:
         with self._lock:
+            self._purge_locked()
             if job_id in self._items:
                 self._items[job_id].update(values)
+                self._updated[job_id] = time.time()
 
     def get(self, job_id: str) -> dict | None:
         with self._lock:
+            self._purge_locked()
             item = self._items.get(job_id)
             return dict(item) if item else None
 
@@ -468,6 +525,12 @@ class WebHandler(BaseHTTPRequestHandler):
 
 def serve(settings: Settings, host: str = "127.0.0.1", port: int = 8765, open_browser: bool = False) -> None:
     WebHandler.settings = settings
+    WebHandler.store = SessionStore(
+        ttl_seconds=settings.session_ttl_seconds,
+        max_items=settings.max_sessions,
+        max_history_turns=settings.max_history_turns,
+    )
+    WebHandler.jobs = JobStore(ttl_seconds=settings.job_ttl_seconds, max_items=settings.max_jobs)
     WebHandler.analysis_slots = threading.BoundedSemaphore(settings.max_concurrent_analyses)
     server = ThreadingHTTPServer((host, port), WebHandler)
     url = f"http://{host}:{port}"
