@@ -13,6 +13,15 @@ function formatDuration(seconds) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+function formatEvidenceRange(item) {
+  const start = item.global_start ?? item.start;
+  const end = item.global_end ?? item.end;
+  const startText = formatDuration(start);
+  const endText = formatDuration(end);
+  const range = startText === endText ? startText : `${startText}-${endText}`;
+  return `P${Number(item.page_index ?? 0) + 1} ${range}`;
+}
+
 function modalityLabel(modality) {
   return ({cc: 'CC', asr: 'ASR', ocr: 'OCR', vision: '视觉', audio_event: '音频', metadata: '元数据'})[modality] || modality;
 }
@@ -127,7 +136,7 @@ function addMessage(role, text, sources = [], skill = '') {
   message.className = `message ${role}`;
   const label = role === 'user' ? '' : '<div class="message-label">AI</div>';
   const skillHtml = skill ? `<div class="answer-skill">${escapeHtml(({metadata:'元数据查询',summary:'总结理解',timeline:'时间线整理',knowledge:'知识点提取',transcript:'字幕检索',evidence_qa:'证据问答'})[skill] || skill)}</div>` : '';
-  const sourceHtml = sources.length ? `<div class="source-list">${sources.map((source) => `<span class="source-chip">${escapeHtml(modalityLabel(source.modality))} · ${escapeHtml(source.page_title)} · ${formatDuration(source.start)}</span>`).join('')}</div>` : '';
+  const sourceHtml = sources.length ? `<div class="source-list">${sources.map((source) => `<span class="source-chip">${escapeHtml(modalityLabel(source.modality))} · ${escapeHtml(source.page_title)} · ${escapeHtml(formatEvidenceRange(source))}</span>`).join('')}</div>` : '';
   message.innerHTML = `${label}<div class="message-bubble">${skillHtml}${escapeHtml(text)}${sourceHtml}</div>`;
   list.appendChild(message);
   $('conversation').scrollTop = $('conversation').scrollHeight;
@@ -158,7 +167,7 @@ function renderDetails(result) {
   $('chapter-list').innerHTML = result.summary.chapters.length ? result.summary.chapters.map((chapter) => `<div class="chapter-item"><span class="chapter-time">${escapeHtml(chapter.timestamp)}</span><span class="chapter-title">${escapeHtml(chapter.title)}</span></div>`).join('') : '<div class="muted">暂无章节信息</div>';
   const timeline = result.timeline || [];
   $('evidence-count').textContent = timeline.length;
-  $('evidence-list').innerHTML = timeline.length ? timeline.slice(0, 80).map((item) => `<div class="evidence-item"><div class="evidence-head"><span class="evidence-modality ${escapeHtml(item.modality)}">${escapeHtml(modalityLabel(item.modality))}</span><span class="evidence-time">${formatDuration(item.start)}</span></div><div class="evidence-text">${escapeHtml(item.content)}</div></div>`).join('') : '<div class="muted">暂无多模态证据</div>';
+  $('evidence-list').innerHTML = timeline.length ? timeline.slice(0, 80).map((item) => `<div class="evidence-item"><div class="evidence-head"><span class="evidence-modality ${escapeHtml(item.modality)}">${escapeHtml(modalityLabel(item.modality))}</span><span class="evidence-time">${escapeHtml(formatEvidenceRange(item))}</span></div><div class="evidence-text">${escapeHtml(item.content)}</div></div>`).join('') : '<div class="muted">暂无多模态证据</div>';
 }
 
 async function analyze(video) {

@@ -18,6 +18,30 @@ from .skills import SkillRoute, classify_question, expand_with_history
 LOGGER = logging.getLogger(__name__)
 
 
+def _page_offsets(pages) -> dict[int, float]:
+    offset = 0.0
+    offsets: dict[int, float] = {}
+    for page in sorted(pages, key=lambda item: item.page_index):
+        offsets[page.page_index] = offset
+        offset += max(float(page.duration_seconds), 0.0)
+    return offsets
+
+
+def _with_global_time(item: EvidenceSegment, offset: float) -> EvidenceSegment:
+    return item.model_copy(
+        update={
+            "global_start": offset + item.start,
+            "global_end": offset + item.end,
+        }
+    )
+
+
+def _timestamp_range(start: float, end: float) -> str:
+    begin = format_timestamp(start)
+    finish = format_timestamp(end)
+    return begin if finish == begin else f"{begin}-{finish}"
+
+
 class BiliAgent:
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or Settings.from_env()
@@ -62,17 +86,22 @@ class BiliAgent:
         page_summaries = []
         pages = []
         timeline: list[EvidenceSegment] = []
+        offsets = _page_offsets(metadata.pages)
         for transcript in transcripts:
             modality = transcript.source if transcript.source != "none" else "metadata"
+            offset = offsets.get(transcript.page.page_index, 0.0)
             timeline.extend(
-                EvidenceSegment(
-                    page_index=transcript.page.page_index,
-                    page_title=transcript.page.title,
-                    start=segment.start,
-                    end=segment.end,
-                    modality=modality,
-                    content=segment.text,
-                    source_label="CC 字幕" if modality == "cc" else "ASR 转写",
+                _with_global_time(
+                    EvidenceSegment(
+                        page_index=transcript.page.page_index,
+                        page_title=transcript.page.title,
+                        start=segment.start,
+                        end=segment.end,
+                        modality=modality,
+                        content=segment.text,
+                        source_label="CC 字幕" if modality == "cc" else "ASR 转写",
+                    ),
+                    offset,
                 )
                 for segment in transcript.segments
             )
@@ -82,7 +111,8 @@ class BiliAgent:
             visual = MultimodalExtractor(self.settings, self.llm)
             for transcript in transcripts:
                 visual_evidence = await visual.extract_page(metadata.url, transcript.page)
-                timeline.extend(visual_evidence)
+                offset = offsets.get(transcript.page.page_index, 0.0)
+                timeline.extend(_with_global_time(item, offset) for item in visual_evidence)
                 await report(
                     "visual",
                     min(70, 54 + int(16 * ((transcript.page.page_index + 1) / max(len(transcripts), 1)))),
@@ -96,7 +126,13 @@ class BiliAgent:
             await report("summary", min(88, 52 + int(32 * (len(pages) / max(len(transcripts), 1)))), f"正在总结第 {transcript.page.page_index + 1} P")
         summary = await self.llm.summarize_video(metadata, page_summaries)
         await report("complete", 100, "分析完成")
-        timeline.sort(key=lambda item: (item.page_index, item.start, item.modality))
+        timeline.sort(
+            key=lambda item: (
+                item.global_start if item.global_start is not None else item.start,
+                item.page_index,
+                item.modality,
+            )
+        )
         return AnalysisResult(metadata=metadata, pages=pages, summary=summary, timeline=timeline, degraded=self.llm.degraded)
 
     async def ask(
@@ -130,7 +166,8 @@ class BiliAgent:
                 skill=route.name,
             )
         context = "\n".join(
-            f"[{hit.modality} · {hit.page_title} {format_timestamp(hit.start)}] {hit.text}" for hit in hits
+            f"[{hit.modality} · P{hit.page_index + 1} {hit.page_title} {_timestamp_range(hit.global_start if hit.global_start is not None else hit.start, hit.global_end if hit.global_end is not None else hit.end)}] {hit.text}"
+            for hit in hits
         )
         history_text = "\n".join(
             f"{item.get('role', 'user')}: {item.get('content', '')}" for item in (history or [])[-4:]
@@ -139,10 +176,13 @@ class BiliAgent:
         used_llm = bool(answer_text)
         if not answer_text:
             answer_text = "根据检索到的字幕片段：\n" + "\n".join(
-                f"- [{hit.page_title} {format_timestamp(hit.start)}] {hit.text}" for hit in hits
+                f"- [P{hit.page_index + 1} {hit.page_title} {_timestamp_range(hit.global_start if hit.global_start is not None else hit.start, hit.global_end if hit.global_end is not None else hit.end)}] {hit.text}" for hit in hits
             )
         citations = "；".join(
-            f"{hit.page_title} {format_timestamp(hit.start)}" for hit in hits
+            dict.fromkeys(
+                f"P{hit.page_index + 1} {hit.page_title} {_timestamp_range(hit.global_start if hit.global_start is not None else hit.start, hit.global_end if hit.global_end is not None else hit.end)}"
+                for hit in hits
+            )
         )
         if "来源" not in answer_text or not re.search(r"\b\d{2}:\d{2}:\d{2}\b", answer_text):
             answer_text += f"\n\n来源：{citations}"

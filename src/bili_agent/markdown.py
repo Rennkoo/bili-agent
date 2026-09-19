@@ -12,9 +12,25 @@ def _published(value) -> str:
     return value.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def _page_offsets(result: AnalysisResult) -> dict[int, float]:
+    offset = 0.0
+    offsets: dict[int, float] = {}
+    for page in sorted(result.metadata.pages, key=lambda item: item.page_index):
+        offsets[page.page_index] = offset
+        offset += max(float(page.duration_seconds), 0.0)
+    return offsets
+
+
+def _range(start: float, end: float) -> str:
+    begin = format_timestamp(start)
+    finish = format_timestamp(end)
+    return begin if begin == finish else f"{begin}-{finish}"
+
+
 def render_markdown(result: AnalysisResult) -> str:
     metadata = result.metadata
     summary = result.summary
+    offsets = _page_offsets(result)
     lines = [
         f"# {metadata.title}",
         "",
@@ -49,8 +65,14 @@ def render_markdown(result: AnalysisResult) -> str:
     if result.timeline:
         for item in result.timeline:
             confidence = f"，置信度 {item.confidence:.0%}" if item.confidence < 1 else ""
+            offset = offsets.get(item.page_index, 0.0)
+            global_start = item.global_start if item.global_start is not None else offset + item.start
+            global_end = item.global_end if item.global_end is not None else offset + item.end
+            location = f"P{item.page_index + 1} {_range(global_start, global_end)}"
+            if global_start != item.start:
+                location += f"（本P {_range(item.start, item.end)}）"
             lines.append(
-                f"- **P{item.page_index + 1} {format_timestamp(item.start)}｜{item.source_label}{confidence}**：{item.content}"
+                f"- **{location}｜{item.source_label}{confidence}**：{item.content}"
             )
     else:
         lines.append("暂无 OCR、视觉或其他补充证据。")
@@ -68,7 +90,11 @@ def render_markdown(result: AnalysisResult) -> str:
         lines.extend([f"### P{item.page.page_index + 1}：{item.page.title}", ""])
         if item.transcript.segments:
             for segment in item.transcript.segments:
-                lines.append(f"`{format_timestamp(segment.start)}` {segment.text}")
+                global_start = offsets.get(item.page.page_index, 0.0) + segment.start
+                prefix = f"`{format_timestamp(global_start)}`"
+                if global_start != segment.start:
+                    prefix += f"（P{item.page.page_index + 1} 本P `{format_timestamp(segment.start)}`）"
+                lines.append(f"{prefix} {segment.text}")
         else:
             lines.append(f"> {item.transcript.notice or '无字幕。'}")
         lines.append("")

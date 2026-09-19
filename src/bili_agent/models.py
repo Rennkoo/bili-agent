@@ -62,6 +62,9 @@ class EvidenceSegment(BaseModel):
     content: str
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     source_label: str
+    # start/end remain relative to the current page for backwards compatibility.
+    global_start: float | None = Field(default=None, ge=0)
+    global_end: float | None = Field(default=None, ge=0)
 
 
 class Chapter(BaseModel):
@@ -105,6 +108,8 @@ class RetrievedSegment(BaseModel):
     text: str
     score: float
     modality: str = "cc"
+    global_start: float | None = None
+    global_end: float | None = None
 
 
 class Answer(BaseModel):
