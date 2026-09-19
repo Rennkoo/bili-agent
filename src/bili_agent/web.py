@@ -22,6 +22,7 @@ from .markdown import render_markdown
 from .models import AnalysisResult
 from .parser import InputParseError, parse_video_input
 from .skills import skill_label
+from .storage import SQLiteStore
 
 LOGGER = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).with_name("static")
@@ -30,14 +31,31 @@ SETTINGS_LOCK = threading.Lock()
 
 
 class SessionStore:
-    def __init__(self, ttl_seconds: int = 24 * 60 * 60, max_items: int = 20, max_history_turns: int = 24):
+    def __init__(
+        self,
+        ttl_seconds: int = 24 * 60 * 60,
+        max_items: int = 20,
+        max_history_turns: int = 24,
+        storage: SQLiteStore | None = None,
+    ):
         self._items: dict[str, AnalysisResult] = {}
         self._history: dict[str, list[dict[str, str]]] = {}
         self._accessed: dict[str, float] = {}
         self._ttl_seconds = max(ttl_seconds, 60)
         self._max_items = max(max_items, 1)
         self._max_history_turns = max(max_history_turns, 2)
+        self._storage = storage
         self._lock = threading.Lock()
+        if self._storage:
+            for session_id, accessed_at, data_json, history_json in self._storage.load_sessions():
+                try:
+                    self._items[session_id] = AnalysisResult.model_validate(json.loads(data_json))
+                    self._history[session_id] = json.loads(history_json)
+                    self._accessed[session_id] = accessed_at
+                except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                    LOGGER.warning("忽略损坏的持久化会话 %s: %s", session_id[:8], exc)
+            with self._lock:
+                self._purge_locked()
 
     def _purge_locked(self) -> None:
         cutoff = time.time() - self._ttl_seconds
@@ -46,11 +64,17 @@ class SessionStore:
             self._items.pop(session_id, None)
             self._history.pop(session_id, None)
             self._accessed.pop(session_id, None)
+        if self._storage:
+            self._storage.delete_sessions(expired)
+        evicted: list[str] = []
         while len(self._items) > self._max_items:
             oldest = min(self._accessed, key=self._accessed.get)
             self._items.pop(oldest, None)
             self._history.pop(oldest, None)
             self._accessed.pop(oldest, None)
+            evicted.append(oldest)
+        if self._storage:
+            self._storage.delete_sessions(evicted)
 
     def put(self, result: AnalysisResult) -> str:
         session_id = uuid.uuid4().hex
@@ -59,6 +83,13 @@ class SessionStore:
             self._items[session_id] = result
             self._history[session_id] = []
             self._accessed[session_id] = time.time()
+            if self._storage:
+                self._storage.save_session(
+                    session_id,
+                    self._accessed[session_id],
+                    result.model_dump(mode="json"),
+                    self._history[session_id],
+                )
         return session_id
 
     def get(self, session_id: str) -> AnalysisResult | None:
@@ -67,6 +98,13 @@ class SessionStore:
             item = self._items.get(session_id)
             if item is not None:
                 self._accessed[session_id] = time.time()
+                if self._storage:
+                    self._storage.save_session(
+                        session_id,
+                        self._accessed[session_id],
+                        item.model_dump(mode="json"),
+                        self._history[session_id],
+                    )
             return item
 
     def history(self, session_id: str) -> list[dict[str, str]]:
@@ -82,15 +120,42 @@ class SessionStore:
                 self._history[session_id].append({"role": role, "content": content})
                 self._history[session_id] = self._history[session_id][-self._max_history_turns :]
                 self._accessed[session_id] = time.time()
+                if self._storage:
+                    self._storage.save_session(
+                        session_id,
+                        self._accessed[session_id],
+                        self._items[session_id].model_dump(mode="json"),
+                        self._history[session_id],
+                    )
 
 
 class JobStore:
-    def __init__(self, ttl_seconds: int = 24 * 60 * 60, max_items: int = 100):
+    def __init__(self, ttl_seconds: int = 24 * 60 * 60, max_items: int = 100, storage: SQLiteStore | None = None):
         self._items: dict[str, dict] = {}
         self._updated: dict[str, float] = {}
         self._ttl_seconds = max(ttl_seconds, 60)
         self._max_items = max(max_items, 10)
+        self._storage = storage
         self._lock = threading.Lock()
+        if self._storage:
+            for job_id, updated_at, data_json in self._storage.load_jobs():
+                try:
+                    data = json.loads(data_json)
+                    if data.get("status") in {"queued", "running"}:
+                        data.update(
+                            status="failed",
+                            stage="failed",
+                            progress=100,
+                            message="服务重启，任务已中断。",
+                        )
+                        if self._storage:
+                            self._storage.save_job(job_id, updated_at, data)
+                    self._items[job_id] = data
+                    self._updated[job_id] = updated_at
+                except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                    LOGGER.warning("忽略损坏的持久化任务 %s: %s", job_id[:8], exc)
+            with self._lock:
+                self._purge_locked()
 
     def _purge_locked(self) -> None:
         cutoff = time.time() - self._ttl_seconds
@@ -102,6 +167,9 @@ class JobStore:
         for job_id in terminal:
             self._items.pop(job_id, None)
             self._updated.pop(job_id, None)
+        if self._storage:
+            self._storage.delete_jobs(list(terminal))
+        evicted: list[str] = []
         while len(self._items) > self._max_items:
             finished = [
                 job_id for job_id, item in self._items.items() if item.get("status") in {"completed", "failed"}
@@ -111,6 +179,9 @@ class JobStore:
             oldest = min(finished, key=self._updated.get)
             self._items.pop(oldest, None)
             self._updated.pop(oldest, None)
+            evicted.append(oldest)
+        if self._storage:
+            self._storage.delete_jobs(evicted)
 
     def create(self) -> str:
         job_id = uuid.uuid4().hex
@@ -124,6 +195,8 @@ class JobStore:
                 "message": "等待开始",
             }
             self._updated[job_id] = time.time()
+            if self._storage:
+                self._storage.save_job(job_id, self._updated[job_id], self._items[job_id])
         return job_id
 
     def update(self, job_id: str, **values) -> None:
@@ -132,6 +205,8 @@ class JobStore:
             if job_id in self._items:
                 self._items[job_id].update(values)
                 self._updated[job_id] = time.time()
+                if self._storage:
+                    self._storage.save_job(job_id, self._updated[job_id], self._items[job_id])
 
     def get(self, job_id: str) -> dict | None:
         with self._lock:
@@ -212,6 +287,7 @@ def _write_env_values(values: dict[str, str]) -> None:
 class WebHandler(BaseHTTPRequestHandler):
     store = SessionStore()
     jobs = JobStore()
+    storage: SQLiteStore | None = None
     settings: Settings
     analysis_slots = threading.BoundedSemaphore(2)
 
@@ -525,12 +601,18 @@ class WebHandler(BaseHTTPRequestHandler):
 
 def serve(settings: Settings, host: str = "127.0.0.1", port: int = 8765, open_browser: bool = False) -> None:
     WebHandler.settings = settings
+    WebHandler.storage = SQLiteStore(settings.storage_db_path)
     WebHandler.store = SessionStore(
         ttl_seconds=settings.session_ttl_seconds,
         max_items=settings.max_sessions,
         max_history_turns=settings.max_history_turns,
+        storage=WebHandler.storage,
     )
-    WebHandler.jobs = JobStore(ttl_seconds=settings.job_ttl_seconds, max_items=settings.max_jobs)
+    WebHandler.jobs = JobStore(
+        ttl_seconds=settings.job_ttl_seconds,
+        max_items=settings.max_jobs,
+        storage=WebHandler.storage,
+    )
     WebHandler.analysis_slots = threading.BoundedSemaphore(settings.max_concurrent_analyses)
     server = ThreadingHTTPServer((host, port), WebHandler)
     url = f"http://{host}:{port}"
@@ -543,3 +625,6 @@ def serve(settings: Settings, host: str = "127.0.0.1", port: int = 8765, open_br
         LOGGER.info("正在关闭聊天面板。")
     finally:
         server.server_close()
+        if WebHandler.storage:
+            WebHandler.storage.close()
+            WebHandler.storage = None

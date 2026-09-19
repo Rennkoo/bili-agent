@@ -56,6 +56,7 @@ class Settings:
     job_ttl_seconds: int = 24 * 60 * 60
     max_jobs: int = 100
     max_history_turns: int = 24
+    storage_db_path: Path = Path(".bili-agent/bili-agent.sqlite3")
 
     @classmethod
     def from_env(cls, env_file: str | Path | None = None) -> "Settings":
@@ -88,6 +89,7 @@ class Settings:
             job_ttl_seconds=_as_int(os.getenv("JOB_TTL_SECONDS"), 24 * 60 * 60, 60),
             max_jobs=_as_int(os.getenv("MAX_JOBS"), 100, 10),
             max_history_turns=_as_int(os.getenv("MAX_HISTORY_TURNS"), 24, 2),
+            storage_db_path=Path(os.getenv("STORAGE_DB_PATH", ".bili-agent/bili-agent.sqlite3")),
         )
 
     @property

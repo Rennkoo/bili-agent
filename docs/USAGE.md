@@ -45,6 +45,7 @@ MAX_SESSIONS=20
 JOB_TTL_SECONDS=86400
 MAX_JOBS=100
 MAX_HISTORY_TURNS=24
+STORAGE_DB_PATH=.bili-agent/bili-agent.sqlite3
 MULTIMODAL_ENABLED=false
 MULTIMODAL_MAX_FRAMES=6
 MEDIA_CACHE_DIR=.bili-agent/media
@@ -61,6 +62,8 @@ VISION_MODEL=
 `WEB_AUTH_TOKEN` 非空时，除健康检查和封面读取外的 Web API 都需要 `Authorization: Bearer <token>`。聊天面板第一次收到认证错误时会提示输入 Token，Token 只保存在当前浏览器会话。公网部署仍建议在 Caddy/Nginx 层额外启用 HTTPS 和用户认证。
 
 `SESSION_TTL_SECONDS`、`JOB_TTL_SECONDS` 控制内存数据保留时间；`MAX_SESSIONS`、`MAX_JOBS` 和 `MAX_HISTORY_TURNS` 控制会话、任务和对话历史上限。任务清理只会删除已完成或失败的旧任务，运行中的任务不会被清理。
+
+`STORAGE_DB_PATH` 指定本地 SQLite 文件。默认位于 `.bili-agent/bili-agent.sqlite3`，已被 Git 忽略；服务重启后会恢复已保存的会话和任务状态。
 
 如果不配置 `LLM_API_KEY`，程序仍然可以获取视频和字幕，但总结会使用字幕原文截断作为降级内容，问答会返回检索到的字幕片段和时间戳。
 

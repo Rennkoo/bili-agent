@@ -187,3 +187,5 @@ curl -H "Authorization: Bearer <WEB_AUTH_TOKEN>" http://127.0.0.1:8765/api/setti
 ```
 
 Token 只作为应用层额外保护，仍应同时启用 HTTPS、Caddy/Nginx Basic Auth 或公司 SSO。
+
+SQLite 文件默认位于 `.bili-agent/bili-agent.sqlite3`。生产环境请把 `.bili-agent` 纳入备份范围，并保持它与 `.env` 一样不提交 Git。
