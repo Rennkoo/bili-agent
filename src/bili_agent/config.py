@@ -50,6 +50,7 @@ class Settings:
     max_question_chars: int = 4000
     max_video_input_chars: int = 500
     max_cover_bytes: int = 5 * 1024 * 1024
+    web_auth_token: str | None = None
 
     @classmethod
     def from_env(cls, env_file: str | Path | None = None) -> "Settings":
@@ -76,6 +77,7 @@ class Settings:
             max_question_chars=_as_int(os.getenv("MAX_QUESTION_CHARS"), 4000, 100),
             max_video_input_chars=_as_int(os.getenv("MAX_VIDEO_INPUT_CHARS"), 500, 32),
             max_cover_bytes=_as_int(os.getenv("MAX_COVER_BYTES"), 5 * 1024 * 1024, 64 * 1024),
+            web_auth_token=os.getenv("WEB_AUTH_TOKEN") or None,
         )
 
     @property

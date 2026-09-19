@@ -77,3 +77,5 @@ src/bili_agent/
 上线、Docker、HTTPS、Git 分支和回滚方案请参阅 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。
 
 聊天问答内置元数据查询、整体总结、章节时间线、知识点提取、字幕检索和证据问答技能；短追问会自动结合当前会话上下文进行检索。
+
+Web 面板可通过 `WEB_AUTH_TOKEN` 开启 Bearer Token 保护；本地默认留空，公网部署时请同时配置 HTTPS 和反向代理认证。

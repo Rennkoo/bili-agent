@@ -178,3 +178,12 @@ docker compose logs --tail=200 bili-agent
 - [ ] 备份当前 Git tag、\`.env\` 密钥和 \`/data\` 缓存策略
 - [ ] 已准备上一版本回滚命令
 
+## 8. 应用层 Token
+
+公网部署时可在 `.env` 中设置 `WEB_AUTH_TOKEN`。除健康检查和封面读取外，Web API 需要携带：
+
+```bash
+curl -H "Authorization: Bearer <WEB_AUTH_TOKEN>" http://127.0.0.1:8765/api/settings
+```
+
+Token 只作为应用层额外保护，仍应同时启用 HTTPS、Caddy/Nginx Basic Auth 或公司 SSO。

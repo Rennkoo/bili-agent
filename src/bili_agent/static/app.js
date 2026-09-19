@@ -31,11 +31,24 @@ function toast(message) {
   toast.timer = window.setTimeout(() => node.classList.remove('show'), 2800);
 }
 
+async function apiFetch(input, options = {}) {
+  const {authRetry = false, ...fetchOptions} = options;
+  const token = window.sessionStorage.getItem('bili-agent-web-token') || '';
+  const headers = new Headers(fetchOptions.headers || {});
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  let response = await fetch(input, {...fetchOptions, headers});
+  if (response.status !== 401 || authRetry) return response;
+  const nextToken = window.prompt('请输入面板访问 Token');
+  if (!nextToken) return response;
+  window.sessionStorage.setItem('bili-agent-web-token', nextToken.trim());
+  return apiFetch(input, {...options, authRetry: true});
+}
+
 async function openSettings() {
   $('settings-modal').classList.remove('hidden');
   $('settings-status').textContent = '正在读取当前配置…';
   try {
-    const response = await fetch('/api/settings', {cache: 'no-store'});
+    const response = await apiFetch('/api/settings', {cache: 'no-store'});
     const settings = await response.json();
     if (!response.ok) throw new Error(settings.error || '配置读取失败');
     $('llm-api-key').value = '';
@@ -54,7 +67,7 @@ async function saveSettings(event) {
   const button = document.querySelector('.save-settings');
   button.disabled = true;
   try {
-    const response = await fetch('/api/settings', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({
+    const response = await apiFetch('/api/settings', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({
       llm_api_key: $('llm-api-key').value,
       llm_base_url: $('llm-base-url').value,
       llm_model: $('llm-model').value,
@@ -83,7 +96,7 @@ async function generateInfographic() {
   button.disabled = true;
   button.classList.add('busy');
   try {
-    const response = await fetch('/api/infographic', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({session_id: state.sessionId})});
+    const response = await apiFetch('/api/infographic', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({session_id: state.sessionId})});
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || '一图流生成失败');
     if (state.infographicUrl) URL.revokeObjectURL(state.infographicUrl);
@@ -152,7 +165,7 @@ async function analyze(video) {
   const button = $('analyze-button');
   setBusy(button, true, '开始分析');
   try {
-    const response = await fetch('/api/analyze', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({video, enable_asr: $('asr-enabled').checked, enable_multimodal: $('multimodal-enabled').checked}) });
+    const response = await apiFetch('/api/analyze', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({video, enable_asr: $('asr-enabled').checked, enable_multimodal: $('multimodal-enabled').checked}) });
     const created = await response.json();
     if (!response.ok) throw new Error(created.error || '分析失败');
     const payload = await waitForJob(created.job_id);
@@ -166,7 +179,7 @@ async function analyze(video) {
 async function waitForJob(jobId) {
   let lastMessage = '';
   while (true) {
-    const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, {cache: 'no-store'});
+    const response = await apiFetch(`/api/jobs/${encodeURIComponent(jobId)}`, {cache: 'no-store'});
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || '任务状态获取失败');
     if (payload.message && payload.message !== lastMessage) {
@@ -197,7 +210,7 @@ async function ask(question) {
   addMessage('user', question);
   $('question-input').value = '';
   try {
-    const response = await fetch('/api/ask', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({session_id: state.sessionId, question}) });
+    const response = await apiFetch('/api/ask', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({session_id: state.sessionId, question}) });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.error || '问答失败');
     addMessage('assistant', payload.answer.answer, payload.answer.sources || [], payload.answer.skill || 'evidence_qa');

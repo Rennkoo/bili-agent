@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import mimetypes
@@ -86,12 +87,19 @@ def _json_default(value):
     return value.model_dump(mode="json") if hasattr(value, "model_dump") else str(value)
 
 
-def _send_json(handler: BaseHTTPRequestHandler, payload: dict, status: int = 200) -> None:
+def _send_json(
+    handler: BaseHTTPRequestHandler,
+    payload: dict,
+    status: int = 200,
+    headers: dict[str, str] | None = None,
+) -> None:
     body = json.dumps(payload, ensure_ascii=False, default=_json_default).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Content-Length", str(len(body)))
     handler.send_header("Cache-Control", "no-store")
+    for key, value in (headers or {}).items():
+        handler.send_header(key, value)
     handler.end_headers()
     handler.wfile.write(body)
 
@@ -153,10 +161,38 @@ class WebHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args) -> None:
         LOGGER.info("web %s", format % args)
 
+    def _is_authorized(self) -> bool:
+        expected = self.settings.web_auth_token
+        if not expected:
+            return True
+        header = self.headers.get("Authorization", "")
+        scheme, _, supplied = header.partition(" ")
+        return scheme.lower() == "bearer" and bool(supplied) and hmac.compare_digest(supplied, expected)
+
+    def _require_auth(self) -> bool:
+        if self._is_authorized():
+            return True
+        _send_json(
+            self,
+            {"error": "需要有效的面板访问 Token。"},
+            HTTPStatus.UNAUTHORIZED,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        return False
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/api/health":
-            _send_json(self, {"status": "ok", "llm_configured": bool(self.settings.llm_api_key)})
+            _send_json(
+                self,
+                {
+                    "status": "ok",
+                    "llm_configured": bool(self.settings.llm_api_key),
+                    "auth_required": bool(self.settings.web_auth_token),
+                },
+            )
+            return
+        if parsed.path.startswith("/api/") and parsed.path != "/api/cover" and not self._require_auth():
             return
         if parsed.path == "/api/settings":
             _send_json(
@@ -181,6 +217,8 @@ class WebHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/") and not self._require_auth():
+            return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if length > 2_000_000:
