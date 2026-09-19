@@ -362,6 +362,7 @@ class WebHandler(BaseHTTPRequestHandler):
 
             current_url = remote_url
             response = None
+            body = None
             for _ in range(4):
                 if not allowed(current_url):
                     raise ValueError("封面重定向到了不受信任的地址。")
@@ -370,26 +371,36 @@ class WebHandler(BaseHTTPRequestHandler):
                     follow_redirects=False,
                     headers={"Referer": "https://www.bilibili.com/", "User-Agent": "Mozilla/5.0 bili-agent/0.1"},
                 ) as client:
-                    response = client.get(current_url)
-                if 300 <= response.status_code < 400:
-                    location = response.headers.get("location")
-                    if not location:
-                        raise ValueError("封面重定向缺少目标地址。")
-                    current_url = urljoin(current_url, location)
-                    continue
-                break
+                    with client.stream("GET", current_url) as response:
+                        if 300 <= response.status_code < 400:
+                            location = response.headers.get("location")
+                            if not location:
+                                raise ValueError("封面重定向缺少目标地址。")
+                            current_url = urljoin(current_url, location)
+                            continue
+                        if not allowed(str(response.url)):
+                            raise ValueError("封面最终地址不受信任。")
+                        response.raise_for_status()
+                        content_type = response.headers.get("content-type", "image/jpeg").split(";", 1)[0]
+                        if not content_type.startswith("image/"):
+                            raise ValueError("远程资源不是图片。")
+                        content_length = response.headers.get("content-length")
+                        if content_length and int(content_length) > self.settings.max_cover_bytes:
+                            raise ValueError("封面文件过大。")
+                        chunks: list[bytes] = []
+                        total = 0
+                        for chunk in response.iter_bytes():
+                            total += len(chunk)
+                            if total > self.settings.max_cover_bytes:
+                                raise ValueError("封面文件过大。")
+                            chunks.append(chunk)
+                        body = b"".join(chunks)
+                        break
             else:
                 raise ValueError("封面重定向次数过多。")
 
-            if response is None or not allowed(str(response.url)):
-                raise ValueError("封面最终地址不受信任。")
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "image/jpeg").split(";", 1)[0]
-            if not content_type.startswith("image/"):
-                raise ValueError("远程资源不是图片。")
-            body = response.content
-            if len(body) > self.settings.max_cover_bytes:
-                raise ValueError("封面文件过大。")
+            if response is None or body is None:
+                raise ValueError("封面下载失败。")
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
