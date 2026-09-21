@@ -44,7 +44,7 @@ bili-agent web --open
 
 打开面板后，点击右上角齿轮按钮即可填写 `LLM_API_KEY`、`LLM_BASE_URL` 和 `LLM_MODEL`。保存后配置立即生效，并写入本机项目的 `.env` 文件；已有 API Key 只显示掩码，不会回显明文。
 
-默认不下载音频。如果某个分 P 没有 CC 字幕，可显式启用预留的 faster-whisper 路径：
+默认开启无字幕时的音频转写。如果某个分 P 没有 CC 字幕，程序才会加载 faster-whisper 并进行转写；可在面板中取消勾选，或设置 `ASR_ENABLED=false`：
 
 ```powershell
 python -m pip install -e ".[asr]"

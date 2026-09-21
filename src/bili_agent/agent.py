@@ -103,7 +103,11 @@ class BiliAgent:
                 "captions" if phase == "cc" else "asr",
                 (22 + int(20 * current / max(total, 1)))
                 if phase == "cc"
-                else (42 + int(6 * current / max(total, 1))),
+                else (
+                    42 + int(6 * min(max(current / max(total, 1), 0.0), 1.0))
+                    if phase == "asr_progress"
+                    else 42 + int(6 * current / max(total, 1))
+                ),
                 message,
             ),
         )

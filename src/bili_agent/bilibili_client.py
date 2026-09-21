@@ -104,6 +104,35 @@ class BilibiliClient:
         completed = 0
         completed_lock = asyncio.Lock()
 
+        async def await_with_heartbeat(
+            factory: Callable[[], Awaitable[Any]],
+            label: str,
+            position: int,
+        ) -> Any:
+            """Keep long yt-dlp/Whisper operations visible and cancellable."""
+            task = asyncio.create_task(factory())
+            started = asyncio.get_running_loop().time()
+            try:
+                while True:
+                    try:
+                        return await asyncio.wait_for(asyncio.shield(task), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        elapsed = int(asyncio.get_running_loop().time() - started)
+                        if progress:
+                            try:
+                                await progress(
+                                    "asr",
+                                    position,
+                                    len(pages),
+                                    f"{label}（已运行 {elapsed} 秒）",
+                                )
+                            except Exception:
+                                LOGGER.debug("ASR 心跳进度更新失败。", exc_info=True)
+            finally:
+                if not task.done():
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+
         async def fetch_cc(page: PageInfo) -> list[Caption]:
             nonlocal completed
             async with semaphore:
@@ -147,7 +176,11 @@ class BilibiliClient:
                 try:
                     page_url = f"{metadata.url}{'&' if '?' in metadata.url else '?'}p={page.page_index + 1}"
                     audio = await asyncio.wait_for(
-                        audio_downloader.download(page_url, page),
+                        await_with_heartbeat(
+                            lambda: audio_downloader.download(page_url, page),
+                            f"正在下载第 {page.page_index + 1} P 的音频",
+                            position - 1,
+                        ),
                         timeout=self.settings.asr_timeout_seconds,
                     )
                     if progress:
@@ -157,8 +190,45 @@ class BilibiliClient:
                             len(pages),
                             f"正在转写第 {page.page_index + 1} P 的音频",
                         )
+
+                    async def transcribe_page() -> list[Caption]:
+                        detailed_transcribe = getattr(asr_transcriber, "transcribe_with_progress", None)
+                        if not callable(detailed_transcribe) or not progress:
+                            return await asr_transcriber.transcribe(audio)
+
+                        loop = asyncio.get_running_loop()
+                        progress_tasks: set[asyncio.Task] = set()
+
+                        def schedule_segment_progress(end: float, duration: float) -> None:
+                            fraction = min(max(end / duration, 0.0), 1.0) if duration > 0 else 0.0
+                            seconds = max(int(end), 0)
+                            total_seconds = max(int(duration), 0)
+
+                            def schedule() -> None:
+                                task = asyncio.create_task(
+                                    progress(
+                                        "asr_progress",
+                                        fraction,
+                                        1,
+                                        f"正在转写第 {page.page_index + 1} P 的音频（已处理约 {seconds}/{total_seconds} 秒）",
+                                    )
+                                )
+                                progress_tasks.add(task)
+                                task.add_done_callback(progress_tasks.discard)
+
+                            loop.call_soon_threadsafe(schedule)
+
+                        result = await detailed_transcribe(audio, schedule_segment_progress)
+                        if progress_tasks:
+                            await asyncio.gather(*progress_tasks, return_exceptions=True)
+                        return result
+
                     asr_segments = await asyncio.wait_for(
-                        asr_transcriber.transcribe(audio),
+                        await_with_heartbeat(
+                            transcribe_page,
+                            f"正在转写第 {page.page_index + 1} P 的音频",
+                            position - 1,
+                        ),
                         timeout=self.settings.asr_timeout_seconds,
                     )
                     transcripts.append(PageTranscript(page=page, source="asr", segments=asr_segments))

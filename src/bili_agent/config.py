@@ -71,7 +71,7 @@ class Settings:
             bili_sessdata=os.getenv("BILI_SESSDATA") or None,
             bili_bili_jct=os.getenv("BILI_BILI_JCT") or None,
             bili_buvid3=os.getenv("BILI_BUVID3") or None,
-            asr_enabled=_as_bool(os.getenv("ASR_ENABLED")),
+            asr_enabled=_as_bool(os.getenv("ASR_ENABLED"), True),
             asr_model=os.getenv("ASR_MODEL", "small"),
             asr_device=os.getenv("ASR_DEVICE", "cpu"),
             asr_compute_type=os.getenv("ASR_COMPUTE_TYPE", "int8"),

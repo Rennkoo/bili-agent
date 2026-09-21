@@ -67,7 +67,7 @@ VISION_MODEL=
 
 长视频字幕获取采用受控并发，并按分P更新进度。可通过 `CAPTION_TIMEOUT_SECONDS` 和 `MAX_CONCURRENT_CAPTION_FETCHES` 调整单P超时与并发数；遇到单个分P失败时会跳过该P并继续后续分析。启用 ASR 时，面板会显示音频下载和转写阶段；`ASR_TIMEOUT_SECONDS` 控制单个分P的 ASR 总超时时间，超时后自动保留无字幕降级结果。
 
-如果不配置 `LLM_API_KEY`，程序仍然可以获取视频和可用内容证据；总结会使用字幕、ASR 或视觉证据截断作为降级内容，问答会返回检索到的证据片段和时间戳。
+默认开启无字幕时的 ASR。若不希望下载音频或执行转写，可在面板中取消勾选，或配置 `ASR_ENABLED=false`。如果不配置 `LLM_API_KEY`，程序仍然可以获取视频和可用内容证据；总结会使用字幕、ASR 或视觉证据截断作为降级内容，问答会返回检索到的证据片段和时间戳。
 
 ## 3. B 站登录态
 
@@ -153,7 +153,7 @@ bili-agent ask "BVxxxx" "什么是缓存？" --top-k 8
 
 ## 6. 无字幕视频与 ASR
 
-默认不下载音频，也不启用 ASR。需要 ASR 时安装可选依赖：
+默认会在 CC 字幕不可用时下载音频并启用 ASR。首次使用前安装可选依赖：
 
 ```powershell
 python -m pip install -e ".[asr]"
@@ -165,7 +165,7 @@ python -m pip install -e ".[asr]"
 bili-agent analyze "BVxxxx" --enable-asr --output notes.md
 ```
 
-处理流程是：优先请求 CC 字幕；无字幕时用 `yt-dlp` 下载对应分 P 音频，再用 faster-whisper 转写，最后纳入总结、Markdown 和问答检索。
+处理流程是：优先请求 CC 字幕；确认无字幕后才用 `yt-dlp` 下载对应分 P 音频并加载 faster-whisper 转写，最后纳入总结、Markdown 和问答检索。
 
 ## 7. 多模态视频
 

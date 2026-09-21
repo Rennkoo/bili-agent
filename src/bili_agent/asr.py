@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
@@ -55,11 +56,40 @@ class FasterWhisperTranscriber:
             from faster_whisper import WhisperModel
         except ImportError as exc:
             raise RuntimeError("启用 ASR 需要安装可选依赖: pip install -e '.[asr]'") from exc
-        self._model = WhisperModel(model_name, device=device, compute_type=compute_type)
+        self._whisper_model = WhisperModel
+        self._model_name = model_name
+        self._device = device
+        self._compute_type = compute_type
+        self._model = None
 
     async def transcribe(self, audio_path: Path) -> list[Caption]:
-        return await asyncio.to_thread(self._transcribe_sync, audio_path)
+        return await self.transcribe_with_progress(audio_path)
 
-    def _transcribe_sync(self, audio_path: Path) -> list[Caption]:
-        segments, _ = self._model.transcribe(str(audio_path), vad_filter=True)
-        return [Caption(start=float(item.start), end=float(item.end), text=item.text.strip()) for item in segments]
+    async def transcribe_with_progress(
+        self,
+        audio_path: Path,
+        progress: Callable[[float, float], None] | None = None,
+    ) -> list[Caption]:
+        return await asyncio.to_thread(self._transcribe_sync, audio_path, progress)
+
+    def _transcribe_sync(
+        self,
+        audio_path: Path,
+        progress: Callable[[float, float], None] | None = None,
+    ) -> list[Caption]:
+        if self._model is None:
+            LOGGER.info("正在加载 faster-whisper 模型: %s", self._model_name)
+            self._model = self._whisper_model(
+                self._model_name,
+                device=self._device,
+                compute_type=self._compute_type,
+            )
+        segments, info = self._model.transcribe(str(audio_path), vad_filter=True)
+        duration = float(getattr(info, "duration", 0.0) or 0.0)
+        result: list[Caption] = []
+        for item in segments:
+            caption = Caption(start=float(item.start), end=float(item.end), text=item.text.strip())
+            result.append(caption)
+            if progress:
+                progress(caption.end, duration)
+        return result
