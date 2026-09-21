@@ -124,7 +124,7 @@ class BiliAgent:
             page_summaries.append(page_summary)
             pages.append(PageAnalysis(page=transcript.page, transcript=transcript, summary=page_summary))
             await report("summary", min(88, 52 + int(32 * (len(pages) / max(len(transcripts), 1)))), f"正在总结第 {transcript.page.page_index + 1} P")
-        summary = await self.llm.summarize_video(metadata, page_summaries)
+        summary = await self.llm.summarize_video(metadata, page_summaries, has_evidence=bool(timeline))
         await report("complete", 100, "分析完成")
         timeline.sort(
             key=lambda item: (
@@ -133,7 +133,19 @@ class BiliAgent:
                 item.modality,
             )
         )
-        return AnalysisResult(metadata=metadata, pages=pages, summary=summary, timeline=timeline, degraded=self.llm.degraded)
+        degraded_reason = None
+        if not timeline:
+            degraded_reason = "没有获取到 CC、ASR、OCR 或视觉证据，当前仅保留元数据降级结果。"
+        elif self.llm.degraded:
+            degraded_reason = "未配置 LLM_API_KEY，当前使用内容证据截断降级结果。"
+        return AnalysisResult(
+            metadata=metadata,
+            pages=pages,
+            summary=summary,
+            timeline=timeline,
+            degraded=self.llm.degraded or not timeline,
+            degraded_reason=degraded_reason,
+        )
 
     async def ask(
         self,

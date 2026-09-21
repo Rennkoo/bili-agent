@@ -66,7 +66,12 @@ class LLMClient:
             f"[{item.source_label} {format_timestamp(item.start)}] {item.content}" for item in evidence
         )
         if not transcript.text and not evidence_text:
-            return self._fallback_summary(page, transcript, evidence)
+            return self._fallback_summary(
+                page,
+                transcript,
+                evidence,
+                reason="没有获取到 CC、ASR、OCR 或视觉证据，无法可靠总结。",
+            )
         if self._client is None:
             return self._fallback_summary(page, transcript, evidence)
         prompt = (
@@ -86,8 +91,17 @@ class LLMClient:
             return self._fallback_summary(page, transcript, evidence)
 
     async def summarize_video(
-        self, metadata: VideoMetadata, page_summaries: list[VideoSummary]
+        self,
+        metadata: VideoMetadata,
+        page_summaries: list[VideoSummary],
+        has_evidence: bool = True,
     ) -> VideoSummary:
+        if not has_evidence:
+            return self._fallback_overall(
+                metadata,
+                page_summaries,
+                reason="没有获取到 CC、ASR、OCR 或视觉证据，无法可靠总结。",
+            )
         if self._client is None:
             return self._fallback_overall(metadata, page_summaries)
         offset = 0
@@ -211,6 +225,7 @@ class LLMClient:
         page: PageInfo,
         transcript: PageTranscript,
         evidence: list[EvidenceSegment] | None = None,
+        reason: str = "未配置 LLM_API_KEY，以下为内容证据截断。",
     ) -> VideoSummary:
         evidence = evidence or []
         evidence_text = "\n".join(item.content for item in evidence)
@@ -219,13 +234,17 @@ class LLMClient:
         first = transcript.segments[0].start if transcript.segments else (evidence[0].start if evidence else 0)
         return VideoSummary(
             video_title=page.title,
-            overall_summary=f"[降级内容] 未配置 LLM_API_KEY，以下为视频内容证据截断：{snippet}",
+            overall_summary=f"[降级内容] {reason}{snippet}",
             chapters=[Chapter(timestamp=format_timestamp(first), title="内容证据摘录", summary=snippet, key_points=[])],
             knowledge_points=[],
         )
 
     @staticmethod
-    def _fallback_overall(metadata: VideoMetadata, page_summaries: list[VideoSummary]) -> VideoSummary:
+    def _fallback_overall(
+        metadata: VideoMetadata,
+        page_summaries: list[VideoSummary],
+        reason: str = "未配置 LLM_API_KEY，按分P内容证据汇总。",
+    ) -> VideoSummary:
         text = "\n\n".join(summary.overall_summary for summary in page_summaries)
         chapters = []
         offset = 0
@@ -243,7 +262,7 @@ class LLMClient:
         points = [point for summary in page_summaries for point in summary.knowledge_points]
         return VideoSummary(
             video_title=metadata.title,
-            overall_summary=f"[降级内容] 未配置 LLM_API_KEY，按分P内容证据汇总：{text[:1200]}",
+            overall_summary=f"[降级内容] {reason}{text[:1200]}",
             chapters=chapters,
             knowledge_points=points,
         )

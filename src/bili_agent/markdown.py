@@ -99,5 +99,5 @@ def render_markdown(result: AnalysisResult) -> str:
             lines.append(f"> {item.transcript.notice or '无字幕。'}")
         lines.append("")
     if result.degraded:
-        lines.extend(["> 提示：未配置 LLM_API_KEY，本文档中的总结为原文截断降级内容。", ""])
+        lines.extend([f"> 提示：{result.degraded_reason or '本文档中的总结为降级内容。'}", ""])
     return "\n".join(lines).rstrip() + "\n"

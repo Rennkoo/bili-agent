@@ -98,6 +98,7 @@ class AnalysisResult(BaseModel):
     summary: VideoSummary
     timeline: list[EvidenceSegment] = Field(default_factory=list)
     degraded: bool = False
+    degraded_reason: str | None = None
 
 
 class RetrievedSegment(BaseModel):

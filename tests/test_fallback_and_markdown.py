@@ -80,6 +80,7 @@ def test_markdown_contains_metadata_timestamps_and_missing_caption_notice():
             )
         ],
         degraded=True,
+        degraded_reason="测试降级原因",
     )
     markdown = render_markdown(result)
     assert "测试 UP主" in markdown
@@ -87,6 +88,7 @@ def test_markdown_contains_metadata_timestamps_and_missing_caption_notice():
     assert "该分P没有可用 CC 字幕" in markdown
     assert "多模态证据时间线" in markdown
     assert "画面文字：缓存策略" in markdown
+    assert "测试降级原因" in markdown
 
 
 def test_fallback_overall_chapters_use_global_timestamps():
@@ -114,3 +116,23 @@ def test_fallback_overall_chapters_use_global_timestamps():
     ]
     overall = LLMClient._fallback_overall(metadata, summaries)
     assert [chapter.timestamp for chapter in overall.chapters] == ["00:00:10", "00:01:35"]
+
+
+def test_video_summary_skips_llm_without_content_evidence():
+    class ExplodingClient(LLMClient):
+        async def _chat_json(self, prompt):
+            raise AssertionError("metadata-only input must not call LLM")
+
+    page = PageInfo(page_index=0, cid=123, title="无字幕分P", duration_seconds=30)
+    metadata = VideoMetadata(
+        bvid="BV1xx411c7mD",
+        aid=170001,
+        title="无字幕视频",
+        pages=[page],
+        duration_seconds=30,
+        url="https://www.bilibili.com/video/BV1xx411c7mD",
+    )
+    client = ExplodingClient(_settings())
+    summary = asyncio.run(client.summarize_video(metadata, [VideoSummary(video_title=page.title, overall_summary="没有证据")], has_evidence=False))
+    assert summary.knowledge_points == []
+    assert "没有获取到" in summary.overall_summary
