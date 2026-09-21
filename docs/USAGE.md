@@ -165,7 +165,9 @@ python -m pip install -e ".[asr]"
 bili-agent analyze "BVxxxx" --enable-asr --output notes.md
 ```
 
-处理流程是：优先请求 CC 字幕；确认无字幕后才用 `yt-dlp` 下载对应分 P 音频并加载 faster-whisper 转写，最后纳入总结、Markdown 和问答检索。
+处理流程是：优先请求 CC 字幕；确认无字幕后才用 `yt-dlp` 下载对应分 P 音频并加载 faster-whisper 转写，最后纳入总结、Markdown 和问答检索。默认使用速度更快的 `base` 模型、`int8`、单束搜索和低码率音频；若更看重质量，可设置 `ASR_MODEL=small`，并适当增大 `ASR_BEAM_SIZE`。
+
+如果本机有 NVIDIA CUDA 环境，建议设置 `ASR_DEVICE=cuda`、`ASR_COMPUTE_TYPE=float16`；没有 CUDA 时使用 `ASR_DEVICE=cpu`、`ASR_COMPUTE_TYPE=int8`。
 
 ## 7. 多模态视频
 

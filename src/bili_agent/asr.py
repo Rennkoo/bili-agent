@@ -18,8 +18,9 @@ class ASRTranscriber(Protocol):
 class AudioDownloader:
     """Download only the best available audio through yt-dlp."""
 
-    def __init__(self, output_dir: Path):
+    def __init__(self, output_dir: Path, format_selector: str = "worstaudio/bestaudio"):
         self.output_dir = output_dir
+        self.format_selector = format_selector
 
     async def download(self, url: str, page: PageInfo) -> Path:
         return await asyncio.to_thread(self._download_sync, url, page)
@@ -32,8 +33,16 @@ class AudioDownloader:
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
         stem = f"page-{page.page_index + 1}-{page.cid}"
+        cached = sorted(
+            path
+            for path in self.output_dir.glob(f"{stem}.*")
+            if path.suffix not in {".part", ".ytdl"}
+        )
+        if cached:
+            LOGGER.info("复用已缓存音频: %s", cached[0])
+            return cached[0]
         options = {
-            "format": "bestaudio/best",
+            "format": self.format_selector,
             "outtmpl": str(self.output_dir / f"{stem}.%(ext)s"),
             "noplaylist": True,
             "quiet": True,
@@ -51,7 +60,7 @@ class AudioDownloader:
 
 
 class FasterWhisperTranscriber:
-    def __init__(self, model_name: str, device: str, compute_type: str):
+    def __init__(self, model_name: str, device: str, compute_type: str, beam_size: int = 1, best_of: int = 1):
         try:
             from faster_whisper import WhisperModel
         except ImportError as exc:
@@ -60,6 +69,8 @@ class FasterWhisperTranscriber:
         self._model_name = model_name
         self._device = device
         self._compute_type = compute_type
+        self._beam_size = beam_size
+        self._best_of = best_of
         self._model = None
 
     async def transcribe(self, audio_path: Path) -> list[Caption]:
@@ -84,7 +95,13 @@ class FasterWhisperTranscriber:
                 device=self._device,
                 compute_type=self._compute_type,
             )
-        segments, info = self._model.transcribe(str(audio_path), vad_filter=True)
+        segments, info = self._model.transcribe(
+            str(audio_path),
+            vad_filter=True,
+            beam_size=self._beam_size,
+            best_of=self._best_of,
+            condition_on_previous_text=False,
+        )
         duration = float(getattr(info, "duration", 0.0) or 0.0)
         result: list[Caption] = []
         for item in segments:

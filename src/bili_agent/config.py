@@ -60,6 +60,9 @@ class Settings:
     caption_timeout_seconds: float = 20.0
     max_concurrent_caption_fetches: int = 6
     asr_timeout_seconds: float = 900.0
+    asr_beam_size: int = 1
+    asr_best_of: int = 1
+    asr_audio_format: str = "worstaudio/bestaudio"
 
     @classmethod
     def from_env(cls, env_file: str | Path | None = None) -> "Settings":
@@ -72,7 +75,7 @@ class Settings:
             bili_bili_jct=os.getenv("BILI_BILI_JCT") or None,
             bili_buvid3=os.getenv("BILI_BUVID3") or None,
             asr_enabled=_as_bool(os.getenv("ASR_ENABLED"), True),
-            asr_model=os.getenv("ASR_MODEL", "small"),
+            asr_model=os.getenv("ASR_MODEL", "base"),
             asr_device=os.getenv("ASR_DEVICE", "cpu"),
             asr_compute_type=os.getenv("ASR_COMPUTE_TYPE", "int8"),
             asr_cache_dir=Path(os.getenv("ASR_CACHE_DIR", ".bili-agent/audio")),
@@ -96,6 +99,9 @@ class Settings:
             caption_timeout_seconds=_as_float(os.getenv("CAPTION_TIMEOUT_SECONDS"), 20.0, 3.0),
             max_concurrent_caption_fetches=_as_int(os.getenv("MAX_CONCURRENT_CAPTION_FETCHES"), 6, 1),
             asr_timeout_seconds=_as_float(os.getenv("ASR_TIMEOUT_SECONDS"), 900.0, 30.0),
+            asr_beam_size=_as_int(os.getenv("ASR_BEAM_SIZE"), 1, 1),
+            asr_best_of=_as_int(os.getenv("ASR_BEST_OF"), 1, 1),
+            asr_audio_format=os.getenv("ASR_AUDIO_FORMAT", "worstaudio/bestaudio"),
         )
 
     @property

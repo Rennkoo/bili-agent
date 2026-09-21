@@ -51,7 +51,9 @@ python -m pip install -e ".[asr]"
 bili-agent analyze "BV1xx411c7mD" --enable-asr --output notes.md
 ```
 
-启用 ASR 后，程序通过 `yt-dlp` 下载对应分 P 的最佳音频，再交给 faster-whisper 转写。音频保存在 `ASR_CACHE_DIR`，需要本机可用的 ffmpeg。
+启用 ASR 后，程序通过 `yt-dlp` 下载适合转写的音频，再交给 faster-whisper 转写。默认使用速度更快的 `base` 模型、`int8`、单束搜索和低码率音频；想提高识别质量可将 `ASR_MODEL=small`，并适当增大 `ASR_BEAM_SIZE`。音频保存在 `ASR_CACHE_DIR`，需要本机可用的 ffmpeg。
+
+如果本机有 NVIDIA CUDA 环境，建议设置 `ASR_DEVICE=cuda`、`ASR_COMPUTE_TYPE=float16`；没有 CUDA 时使用 `ASR_DEVICE=cpu`、`ASR_COMPUTE_TYPE=int8`。
 
 ## 项目结构
 

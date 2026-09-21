@@ -87,8 +87,10 @@ class BiliAgent:
                     self.settings.asr_model,
                     self.settings.asr_device,
                     self.settings.asr_compute_type,
+                    self.settings.asr_beam_size,
+                    self.settings.asr_best_of,
                 )
-                downloader = AudioDownloader(self.settings.asr_cache_dir)
+                downloader = AudioDownloader(self.settings.asr_cache_dir, self.settings.asr_audio_format)
             except Exception as exc:
                 asr_notice = f"未能启用 ASR：{exc}"
                 LOGGER.warning(asr_notice)
