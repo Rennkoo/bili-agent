@@ -94,7 +94,7 @@ class BilibiliClient:
         asr_transcriber: ASRTranscriber | None = None,
         audio_downloader: AudioDownloader | None = None,
         asr_notice: str | None = None,
-        progress: Callable[[int, int], Awaitable[None]] | None = None,
+        progress: Callable[[str, int, int, str], Awaitable[None]] | None = None,
     ) -> list[PageTranscript]:
         pages = list(metadata.pages)
         if not pages:
@@ -122,24 +122,63 @@ class BilibiliClient:
                     async with completed_lock:
                         completed += 1
                         if progress:
-                            await progress(completed, len(pages))
+                            await progress(
+                                "cc",
+                                completed,
+                                len(pages),
+                                f"正在获取 CC 字幕（{completed}/{len(pages)}）",
+                            )
 
         cc_segments = await asyncio.gather(*(fetch_cc(page) for page in pages))
         transcripts: list[PageTranscript] = []
-        for page, segments in zip(pages, cc_segments):
+        for position, (page, segments) in enumerate(zip(pages, cc_segments), start=1):
             if segments:
                 transcripts.append(PageTranscript(page=page, source="cc", segments=segments))
                 continue
 
             if asr_enabled and asr_transcriber and audio_downloader:
+                if progress:
+                    await progress(
+                        "asr",
+                        position - 1,
+                        len(pages),
+                        f"正在准备第 {page.page_index + 1} P 的音频转写",
+                    )
                 try:
                     page_url = f"{metadata.url}{'&' if '?' in metadata.url else '?'}p={page.page_index + 1}"
-                    audio = await audio_downloader.download(page_url, page)
-                    asr_segments = await asr_transcriber.transcribe(audio)
+                    audio = await asyncio.wait_for(
+                        audio_downloader.download(page_url, page),
+                        timeout=self.settings.asr_timeout_seconds,
+                    )
+                    if progress:
+                        await progress(
+                            "asr",
+                            position - 1,
+                            len(pages),
+                            f"正在转写第 {page.page_index + 1} P 的音频",
+                        )
+                    asr_segments = await asyncio.wait_for(
+                        asr_transcriber.transcribe(audio),
+                        timeout=self.settings.asr_timeout_seconds,
+                    )
                     transcripts.append(PageTranscript(page=page, source="asr", segments=asr_segments))
                     continue
+                except asyncio.TimeoutError:
+                    LOGGER.warning(
+                        "第 %s P 的 ASR 超时（%.1f 秒），跳过并继续分析。",
+                        page.page_index + 1,
+                        self.settings.asr_timeout_seconds,
+                    )
                 except Exception:
                     LOGGER.exception("第 %s P 的 ASR 失败，保留无字幕状态。", page.page_index + 1)
+                finally:
+                    if progress:
+                        await progress(
+                            "asr",
+                            position,
+                            len(pages),
+                            f"第 {page.page_index + 1} P 的音频处理完成",
+                        )
 
             notice = asr_notice or "该分P没有可用 CC 字幕；ASR 默认未启用。"
             transcripts.append(PageTranscript(page=page, source="none", notice=notice))

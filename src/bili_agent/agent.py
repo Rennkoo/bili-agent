@@ -80,6 +80,7 @@ class BiliAgent:
         downloader = None
         asr_notice = None
         if use_asr:
+            await report("asr", 18, "正在准备 ASR 音频转写能力")
             try:
                 transcriber = await asyncio.to_thread(
                     FasterWhisperTranscriber,
@@ -98,10 +99,12 @@ class BiliAgent:
             transcriber,
             downloader,
             asr_notice,
-            progress=lambda completed, total: report(
-                "captions",
-                22 + int(20 * completed / max(total, 1)),
-                f"正在获取 CC 字幕（{completed}/{total}）",
+            progress=lambda phase, current, total, message: report(
+                "captions" if phase == "cc" else "asr",
+                (22 + int(20 * current / max(total, 1)))
+                if phase == "cc"
+                else (42 + int(6 * current / max(total, 1))),
+                message,
             ),
         )
         await report("transcript", 48, "字幕/语音内容已整理，正在生成时间线")

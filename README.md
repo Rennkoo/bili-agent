@@ -82,4 +82,4 @@ src/bili_agent/
 
 Web 面板可通过 `WEB_AUTH_TOKEN` 开启 Bearer Token 保护；本地默认留空，公网部署时请同时配置 HTTPS 和反向代理认证。
 
-长视频会并发获取各分P CC 字幕，并在面板中显示 `P x / 总P数` 进度。`CAPTION_TIMEOUT_SECONDS` 控制单个分P字幕请求超时，`MAX_CONCURRENT_CAPTION_FETCHES` 控制字幕并发数。
+长视频会并发获取各分P CC 字幕，并在面板中显示 `P x / 总P数` 进度。`CAPTION_TIMEOUT_SECONDS` 控制单个分P字幕请求超时，`MAX_CONCURRENT_CAPTION_FETCHES` 控制字幕并发数。启用 ASR 后会显示音频下载和转写进度，`ASR_TIMEOUT_SECONDS` 控制单个分P的 ASR 总超时时间。

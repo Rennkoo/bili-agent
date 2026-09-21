@@ -59,6 +59,7 @@ class Settings:
     storage_db_path: Path = Path(".bili-agent/bili-agent.sqlite3")
     caption_timeout_seconds: float = 20.0
     max_concurrent_caption_fetches: int = 6
+    asr_timeout_seconds: float = 900.0
 
     @classmethod
     def from_env(cls, env_file: str | Path | None = None) -> "Settings":
@@ -94,6 +95,7 @@ class Settings:
             storage_db_path=Path(os.getenv("STORAGE_DB_PATH", ".bili-agent/bili-agent.sqlite3")),
             caption_timeout_seconds=_as_float(os.getenv("CAPTION_TIMEOUT_SECONDS"), 20.0, 3.0),
             max_concurrent_caption_fetches=_as_int(os.getenv("MAX_CONCURRENT_CAPTION_FETCHES"), 6, 1),
+            asr_timeout_seconds=_as_float(os.getenv("ASR_TIMEOUT_SECONDS"), 900.0, 30.0),
         )
 
     @property

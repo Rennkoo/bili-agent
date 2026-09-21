@@ -65,7 +65,7 @@ VISION_MODEL=
 
 `STORAGE_DB_PATH` 指定本地 SQLite 文件。默认位于 `.bili-agent/bili-agent.sqlite3`，已被 Git 忽略；服务重启后会恢复已保存的会话和任务状态。
 
-长视频字幕获取采用受控并发，并按分P更新进度。可通过 `CAPTION_TIMEOUT_SECONDS` 和 `MAX_CONCURRENT_CAPTION_FETCHES` 调整单P超时与并发数；遇到单个分P失败时会跳过该P并继续后续分析。
+长视频字幕获取采用受控并发，并按分P更新进度。可通过 `CAPTION_TIMEOUT_SECONDS` 和 `MAX_CONCURRENT_CAPTION_FETCHES` 调整单P超时与并发数；遇到单个分P失败时会跳过该P并继续后续分析。启用 ASR 时，面板会显示音频下载和转写阶段；`ASR_TIMEOUT_SECONDS` 控制单个分P的 ASR 总超时时间，超时后自动保留无字幕降级结果。
 
 如果不配置 `LLM_API_KEY`，程序仍然可以获取视频和可用内容证据；总结会使用字幕、ASR 或视觉证据截断作为降级内容，问答会返回检索到的证据片段和时间戳。
 
