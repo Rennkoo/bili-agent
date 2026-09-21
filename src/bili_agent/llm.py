@@ -40,7 +40,14 @@ class LLMClient:
                 kwargs: dict[str, Any] = {"api_key": settings.llm_api_key}
                 if settings.llm_base_url:
                     kwargs["base_url"] = settings.llm_base_url
-                self._client = AsyncOpenAI(**kwargs, timeout=settings.llm_timeout_seconds)
+                # Summary requests have a deterministic local fallback. Disable the SDK's
+                # implicit retries so one unavailable endpoint cannot stall a long video
+                # analysis for several timeout windows.
+                self._client = AsyncOpenAI(
+                    **kwargs,
+                    timeout=settings.llm_timeout_seconds,
+                    max_retries=0,
+                )
             except ImportError:
                 LOGGER.warning("未安装 openai，改用原文降级模式。")
         else:
@@ -88,7 +95,12 @@ class LLMClient:
             return self._validate_summary(data, page.title)
         except Exception:
             LOGGER.exception("第 %s P 的 LLM 总结失败，使用降级内容。", page.page_index + 1)
-            return self._fallback_summary(page, transcript, evidence)
+            return self._fallback_summary(
+                page,
+                transcript,
+                evidence,
+                reason="LLM 总结请求失败，已自动使用内容证据降级。",
+            )
 
     async def summarize_video(
         self,
@@ -131,7 +143,11 @@ class LLMClient:
             return self._validate_summary(data, metadata.title)
         except Exception:
             LOGGER.exception("视频级 LLM 总结失败，使用降级内容。")
-            return self._fallback_overall(metadata, page_summaries)
+            return self._fallback_overall(
+                metadata,
+                page_summaries,
+                reason="视频级 LLM 总结请求失败，已自动按分P内容证据汇总。",
+            )
 
     async def answer(
         self,
@@ -195,7 +211,15 @@ class LLMClient:
             response = await self._client.chat.completions.create(
                 **common, response_format={"type": "json_object"}
             )
-        except Exception:
+        except Exception as exc:
+            # Some OpenAI-compatible gateways reject response_format, but a timeout
+            # or transport error should not trigger a second equally slow request.
+            error_text = str(exc).lower()
+            error_type = type(exc).__name__.lower()
+            format_error = "response_format" in error_text or "json_object" in error_text
+            known_bad_request = error_type in {"badrequesterror", "unprocessableentityerror"}
+            if not (format_error or known_bad_request):
+                raise
             response = await self._client.chat.completions.create(**common)
         content = response.choices[0].message.content or "{}"
         content = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", content, flags=re.IGNORECASE)
