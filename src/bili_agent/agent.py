@@ -164,17 +164,27 @@ class BiliAgent:
                 item.modality,
             )
         )
+        page_summary_degraded = any(
+            page.summary.overall_summary.startswith("[降级内容]") for page in pages
+        )
+        overall_summary_degraded = summary.overall_summary.startswith("[降级内容]")
         degraded_reason = None
         if not timeline:
             degraded_reason = "没有获取到 CC、ASR、OCR 或视觉证据，当前仅保留元数据降级结果。"
         elif self.llm.degraded:
             degraded_reason = "未配置 LLM_API_KEY，当前使用内容证据截断降级结果。"
+        elif page_summary_degraded and overall_summary_degraded:
+            degraded_reason = "部分分P和视频级 LLM 总结失败，已使用内容证据降级。"
+        elif page_summary_degraded:
+            degraded_reason = "部分分P的 LLM 总结请求失败，已使用内容证据降级；视频级总结仍已完成。"
+        elif overall_summary_degraded:
+            degraded_reason = "视频级 LLM 总结请求失败，已按分P内容证据汇总。"
         return AnalysisResult(
             metadata=metadata,
             pages=pages,
             summary=summary,
             timeline=timeline,
-            degraded=self.llm.degraded or not timeline,
+            degraded=self.llm.degraded or not timeline or page_summary_degraded or overall_summary_degraded,
             degraded_reason=degraded_reason,
         )
 
