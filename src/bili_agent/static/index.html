@@ -111,6 +111,16 @@
       <div class="settings-actions"><button class="secondary-button" id="cancel-settings" type="button">取消</button><button class="save-settings" type="submit">保存配置</button></div>
     </form>
   </div>
+  <div class="modal-backdrop hidden" id="page-picker-modal" role="dialog" aria-modal="true" aria-labelledby="page-picker-title">
+    <section class="page-picker-modal">
+      <div class="settings-head"><div><div class="settings-kicker">PART SELECTION</div><h2 id="page-picker-title">选择要分析的分P</h2></div><button class="close-inspector" id="close-page-picker" type="button" aria-label="关闭分P选择">×</button></div>
+      <div class="page-picker-summary" id="page-picker-summary">正在读取分P列表…</div>
+      <div class="page-picker-actions"><button class="secondary-button" id="select-all-pages" type="button">全选</button><button class="secondary-button" id="clear-pages" type="button">清空</button></div>
+      <div class="page-list" id="page-list"></div>
+      <div class="settings-status" id="page-picker-status"></div>
+      <div class="settings-actions"><button class="secondary-button" id="cancel-page-picker" type="button">取消</button><button class="save-settings" id="confirm-page-picker" type="button">开始分析所选分P</button></div>
+    </section>
+  </div>
   <div class="toast" id="toast" role="status"></div>
   <script src="/app.js"></script>
 </body>

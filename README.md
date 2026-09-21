@@ -40,6 +40,8 @@ bili-agent ask "BV1xx411c7mD" "视频中提到的主要方法是什么？"
 bili-agent web --open
 ```
 
+面板会先读取视频信息和分P列表，再让你选择需要分析的分P；长视频默认不勾选全部分P，确认选择后才开始字幕、ASR、视觉和总结流程。
+
 打开面板后，点击右上角齿轮按钮即可填写 `LLM_API_KEY`、`LLM_BASE_URL` 和 `LLM_MODEL`。保存后配置立即生效，并写入本机项目的 `.env` 文件；已有 API Key 只显示掩码，不会回显明文。
 
 默认不下载音频。如果某个分 P 没有 CC 字幕，可显式启用预留的 faster-whisper 路径：
@@ -79,3 +81,5 @@ src/bili_agent/
 聊天问答内置元数据查询、整体总结、章节时间线、知识点提取、字幕检索和证据问答技能；短追问会自动结合当前会话上下文进行检索。
 
 Web 面板可通过 `WEB_AUTH_TOKEN` 开启 Bearer Token 保护；本地默认留空，公网部署时请同时配置 HTTPS 和反向代理认证。
+
+长视频会并发获取各分P CC 字幕，并在面板中显示 `P x / 总P数` 进度。`CAPTION_TIMEOUT_SECONDS` 控制单个分P字幕请求超时，`MAX_CONCURRENT_CAPTION_FETCHES` 控制字幕并发数。

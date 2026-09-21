@@ -57,6 +57,8 @@ class Settings:
     max_jobs: int = 100
     max_history_turns: int = 24
     storage_db_path: Path = Path(".bili-agent/bili-agent.sqlite3")
+    caption_timeout_seconds: float = 20.0
+    max_concurrent_caption_fetches: int = 6
 
     @classmethod
     def from_env(cls, env_file: str | Path | None = None) -> "Settings":
@@ -90,6 +92,8 @@ class Settings:
             max_jobs=_as_int(os.getenv("MAX_JOBS"), 100, 10),
             max_history_turns=_as_int(os.getenv("MAX_HISTORY_TURNS"), 24, 2),
             storage_db_path=Path(os.getenv("STORAGE_DB_PATH", ".bili-agent/bili-agent.sqlite3")),
+            caption_timeout_seconds=_as_float(os.getenv("CAPTION_TIMEOUT_SECONDS"), 20.0, 3.0),
+            max_concurrent_caption_fetches=_as_int(os.getenv("MAX_CONCURRENT_CAPTION_FETCHES"), 6, 1),
         )
 
     @property

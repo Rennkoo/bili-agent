@@ -51,6 +51,7 @@ class BiliAgent:
     async def analyze(
         self,
         video_input: str,
+        page_indices: list[int] | None = None,
         enable_asr: bool | None = None,
         enable_multimodal: bool | None = None,
         progress: Callable[[str, int, str], Awaitable[None]] | None = None,
@@ -62,6 +63,17 @@ class BiliAgent:
         await report("metadata", 8, "正在获取视频信息和分P列表")
         identifier = parse_video_input(video_input)
         metadata, bili_video = await self.bilibili.fetch_metadata(identifier)
+        if page_indices is not None:
+            selected = set(page_indices)
+            pages = [page for page in metadata.pages if page.page_index in selected]
+            if not pages:
+                raise ValueError("至少选择一个有效分P。")
+            metadata = metadata.model_copy(
+                update={
+                    "pages": pages,
+                    "duration_seconds": sum(page.duration_seconds for page in pages),
+                }
+            )
         await report("captions", 22, "正在获取 CC 字幕")
         use_asr = self.settings.asr_enabled if enable_asr is None else enable_asr
         transcriber = None
@@ -80,7 +92,17 @@ class BiliAgent:
                 asr_notice = f"未能启用 ASR：{exc}"
                 LOGGER.warning(asr_notice)
         transcripts = await self.bilibili.fetch_transcripts(
-            metadata, bili_video, bool(transcriber and downloader), transcriber, downloader, asr_notice
+            metadata,
+            bili_video,
+            bool(transcriber and downloader),
+            transcriber,
+            downloader,
+            asr_notice,
+            progress=lambda completed, total: report(
+                "captions",
+                22 + int(20 * completed / max(total, 1)),
+                f"正在获取 CC 字幕（{completed}/{total}）",
+            ),
         )
         await report("transcript", 48, "字幕/语音内容已整理，正在生成时间线")
         page_summaries = []

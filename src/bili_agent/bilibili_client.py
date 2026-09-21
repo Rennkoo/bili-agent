@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -92,10 +94,39 @@ class BilibiliClient:
         asr_transcriber: ASRTranscriber | None = None,
         audio_downloader: AudioDownloader | None = None,
         asr_notice: str | None = None,
+        progress: Callable[[int, int], Awaitable[None]] | None = None,
     ) -> list[PageTranscript]:
+        pages = list(metadata.pages)
+        if not pages:
+            return []
+
+        semaphore = asyncio.Semaphore(self.settings.max_concurrent_caption_fetches)
+        completed = 0
+        completed_lock = asyncio.Lock()
+
+        async def fetch_cc(page: PageInfo) -> list[Caption]:
+            nonlocal completed
+            async with semaphore:
+                try:
+                    return await asyncio.wait_for(
+                        self._fetch_cc(metadata, bili_video, page),
+                        timeout=self.settings.caption_timeout_seconds,
+                    )
+                except asyncio.TimeoutError:
+                    LOGGER.warning("第 %s P 获取 CC 字幕超时（%.1f 秒）。", page.page_index + 1, self.settings.caption_timeout_seconds)
+                    return []
+                except Exception:
+                    LOGGER.warning("第 %s P 获取 CC 字幕失败。", page.page_index + 1, exc_info=True)
+                    return []
+                finally:
+                    async with completed_lock:
+                        completed += 1
+                        if progress:
+                            await progress(completed, len(pages))
+
+        cc_segments = await asyncio.gather(*(fetch_cc(page) for page in pages))
         transcripts: list[PageTranscript] = []
-        for page in metadata.pages:
-            segments = await self._fetch_cc(metadata, bili_video, page)
+        for page, segments in zip(pages, cc_segments):
             if segments:
                 transcripts.append(PageTranscript(page=page, source="cc", segments=segments))
                 continue

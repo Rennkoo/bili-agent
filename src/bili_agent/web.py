@@ -363,6 +363,9 @@ class WebHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/analyze":
                 self._analyze(payload)
                 return
+            if parsed.path == "/api/inspect":
+                self._inspect(payload)
+                return
             if parsed.path == "/api/settings":
                 self._save_settings(payload)
                 return
@@ -389,6 +392,16 @@ class WebHandler(BaseHTTPRequestHandler):
             parse_video_input(video)
         except InputParseError as exc:
             raise ValueError(str(exc)) from exc
+        page_indices = payload.get("page_indices")
+        if page_indices is not None:
+            if not isinstance(page_indices, list) or not page_indices:
+                raise ValueError("至少选择一个分P。")
+            try:
+                page_indices = sorted({int(value) for value in page_indices})
+            except (TypeError, ValueError) as exc:
+                raise ValueError("分P选择无效。") from exc
+            if any(value < 0 for value in page_indices):
+                raise ValueError("分P选择无效。")
         # The web workflow is designed for video understanding: transcribe only
         # when CC subtitles are unavailable, while keeping the CLI conservative.
         enable_asr = bool(payload.get("enable_asr", True))
@@ -399,7 +412,7 @@ class WebHandler(BaseHTTPRequestHandler):
         job_id = self.jobs.create()
         thread = threading.Thread(
             target=self._run_analysis_job,
-            args=(job_id, video, enable_asr, enable_multimodal),
+            args=(job_id, video, page_indices, enable_asr, enable_multimodal),
             daemon=True,
             name=f"bili-agent-{job_id[:8]}",
         )
@@ -409,6 +422,20 @@ class WebHandler(BaseHTTPRequestHandler):
             self.analysis_slots.release()
             raise
         _send_json(self, {"job_id": job_id}, HTTPStatus.ACCEPTED)
+
+    def _inspect(self, payload: dict) -> None:
+        video = str(payload.get("video", "")).strip()
+        if not video:
+            raise ValueError("请输入 Bilibili 视频链接、BV 号或 av 号。")
+        if len(video) > self.settings.max_video_input_chars:
+            raise ValueError(f"视频输入过长，最多允许 {self.settings.max_video_input_chars} 个字符。")
+        try:
+            identifier = parse_video_input(video)
+        except InputParseError as exc:
+            raise ValueError(str(exc)) from exc
+        agent = BiliAgent(self.settings)
+        metadata, _ = _run(agent.bilibili.fetch_metadata(identifier))
+        _send_json(self, {"metadata": metadata.model_dump(mode="json")})
 
     def _save_settings(self, payload: dict) -> None:
         base_url = str(payload.get("llm_base_url", "")).strip()
@@ -449,7 +476,14 @@ class WebHandler(BaseHTTPRequestHandler):
             },
         )
 
-    def _run_analysis_job(self, job_id: str, video: str, enable_asr: bool, enable_multimodal: bool) -> None:
+    def _run_analysis_job(
+        self,
+        job_id: str,
+        video: str,
+        page_indices: list[int] | None,
+        enable_asr: bool,
+        enable_multimodal: bool,
+    ) -> None:
         async def progress(stage: str, percent: int, message: str) -> None:
             self.jobs.update(job_id, status="running", stage=stage, progress=percent, message=message)
 
@@ -457,6 +491,7 @@ class WebHandler(BaseHTTPRequestHandler):
             result = _run(
                 BiliAgent(self.settings).analyze(
                     video,
+                    page_indices=page_indices,
                     enable_asr=enable_asr,
                     enable_multimodal=enable_multimodal,
                     progress=progress,

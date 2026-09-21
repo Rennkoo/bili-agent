@@ -1,4 +1,4 @@
-const state = { sessionId: null, result: null, sessions: [], sessionData: {}, infographicUrl: null, infographicFilename: 'bili-infographic.svg' };
+const state = { sessionId: null, result: null, sessions: [], sessionData: {}, infographicUrl: null, infographicFilename: 'bili-infographic.svg', pendingVideo: '', pendingMetadata: null };
 const $ = (id) => document.getElementById(id);
 
 function escapeHtml(value) {
@@ -174,7 +174,50 @@ async function analyze(video) {
   const button = $('analyze-button');
   setBusy(button, true, '开始分析');
   try {
-    const response = await apiFetch('/api/analyze', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({video, enable_asr: $('asr-enabled').checked, enable_multimodal: $('multimodal-enabled').checked}) });
+    $('composer-hint').textContent = '正在读取视频信息和分P列表…';
+    const response = await apiFetch('/api/inspect', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({video}) });
+    const inspected = await response.json();
+    if (!response.ok) throw new Error(inspected.error || '读取视频信息失败');
+    state.pendingVideo = video;
+    state.pendingMetadata = inspected.metadata;
+    renderPagePicker(inspected.metadata);
+    $('page-picker-modal').classList.remove('hidden');
+    $('composer-hint').textContent = '请选择要分析的分P';
+  } catch (error) { toast(error.message); }
+  finally { setBusy(button, false, '开始分析'); }
+}
+
+function renderPagePicker(metadata) {
+  const pages = metadata.pages || [];
+  const defaultChecked = pages.length <= 12;
+  $('page-picker-summary').textContent = `${metadata.title} · 共 ${pages.length} 个分P · 请选择需要分析的内容`;
+  $('page-picker-status').textContent = pages.length ? `已选择 ${defaultChecked ? pages.length : 0} / ${pages.length}` : '没有可用分P';
+  $('page-list').innerHTML = pages.map((page) => `<label class="page-option"><input type="checkbox" value="${Number(page.page_index)}"${defaultChecked ? ' checked' : ''}><span class="page-option-copy"><span class="page-option-title">P${Number(page.page_index) + 1} · ${escapeHtml(page.title)}</span><span class="page-option-meta">${formatDuration(page.duration_seconds)}</span></span></label>`).join('');
+  $('page-list').querySelectorAll('input').forEach((input) => input.addEventListener('change', updatePageSelectionStatus));
+}
+
+function updatePageSelectionStatus() {
+  const selected = $('page-list').querySelectorAll('input:checked').length;
+  const total = $('page-list').querySelectorAll('input').length;
+  $('page-picker-status').textContent = `已选择 ${selected} / ${total}`;
+}
+
+function closePagePicker() {
+  $('page-picker-modal').classList.add('hidden');
+  state.pendingVideo = '';
+  state.pendingMetadata = null;
+  $('composer-hint').textContent = '先输入视频链接，建立分析会话';
+}
+
+async function analyzeSelectedPages() {
+  const pageIndices = Array.from($('page-list').querySelectorAll('input:checked')).map((input) => Number(input.value));
+  if (!pageIndices.length) return toast('请至少选择一个分P');
+  const video = state.pendingVideo;
+  $('page-picker-modal').classList.add('hidden');
+  const button = $('analyze-button');
+  setBusy(button, true, '开始分析');
+  try {
+    const response = await apiFetch('/api/analyze', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({video, page_indices: pageIndices, enable_asr: $('asr-enabled').checked, enable_multimodal: $('multimodal-enabled').checked}) });
     const created = await response.json();
     if (!response.ok) throw new Error(created.error || '分析失败');
     const payload = await waitForJob(created.job_id);
@@ -246,7 +289,8 @@ function switchSession(sessionId) {
 }
 
 function resetSession() {
-  state.sessionId = null; state.result = null;
+  state.sessionId = null; state.result = null; state.pendingVideo = ''; state.pendingMetadata = null;
+  $('page-picker-modal').classList.add('hidden');
   $('conversation').innerHTML = `<div class="welcome-block" id="welcome-block"><div class="welcome-kicker">VIDEO RESEARCH DESK</div><h1>把一个视频，<br><em>变成你的知识库。</em></h1><p>输入一个链接，开始这段视频研究。</p><div class="starter-row"><button class="starter" data-question="这个视频主要讲了什么？">概括这个视频 <span>↗</span></button><button class="starter" data-question="视频中最重要的三个知识点是什么？">提取知识点 <span>↗</span></button></div></div>`;
   $('composer-form').classList.remove('hidden'); $('question-form').classList.add('hidden'); $('video-input').value = ''; $('crumb-title').textContent = '新会话'; $('composer-hint').textContent = '先输入视频链接，建立分析会话';
   $('video-card').className = 'video-card empty-card'; $('video-card').innerHTML = '<div class="video-cover placeholder-cover"><span>BV</span></div><div class="empty-title">等待一个视频</div><div class="empty-copy">分析完成后，这里会显示视频信息和章节。</div>';
@@ -256,6 +300,11 @@ function resetSession() {
 function bindStarters() { document.querySelectorAll('.starter').forEach((button) => button.addEventListener('click', () => { if (!state.sessionId) return toast('请先输入视频链接'); ask(button.dataset.question); })); }
 
 $('composer-form').addEventListener('submit', (event) => { event.preventDefault(); const value = $('video-input').value.trim(); if (value) analyze(value); else toast('请先输入视频链接'); });
+$('close-page-picker').addEventListener('click', closePagePicker);
+$('cancel-page-picker').addEventListener('click', closePagePicker);
+$('select-all-pages').addEventListener('click', () => { $('page-list').querySelectorAll('input').forEach((input) => { input.checked = true; }); updatePageSelectionStatus(); });
+$('clear-pages').addEventListener('click', () => { $('page-list').querySelectorAll('input').forEach((input) => { input.checked = false; }); updatePageSelectionStatus(); });
+$('confirm-page-picker').addEventListener('click', analyzeSelectedPages);
 $('question-form').addEventListener('submit', (event) => { event.preventDefault(); const value = $('question-input').value.trim(); if (value) ask(value); });
 $('new-session').addEventListener('click', resetSession);
 $('settings-button').addEventListener('click', openSettings);
