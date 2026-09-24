@@ -89,6 +89,9 @@ class BiliAgent:
                     self.settings.asr_compute_type,
                     self.settings.asr_beam_size,
                     self.settings.asr_best_of,
+                    self.settings.asr_language,
+                    self.settings.asr_candidate_languages,
+                    self.settings.asr_rerank_mode,
                 )
                 downloader = AudioDownloader(self.settings.asr_cache_dir, self.settings.asr_audio_format)
             except Exception as exc:
@@ -113,6 +116,10 @@ class BiliAgent:
                 message,
             ),
         )
+        if self.settings.asr_rerank_mode == "llm":
+            transcripts = await asyncio.gather(
+                *(self.llm.rerank_transcript(transcript) for transcript in transcripts)
+            )
         await report("transcript", 48, "字幕/语音内容已整理，正在生成时间线")
         page_summaries = []
         pages = []

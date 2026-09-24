@@ -38,6 +38,10 @@ class Caption(BaseModel):
     start: float = Field(ge=0)
     end: float = Field(ge=0)
     text: str
+    language: str | None = None
+    # Optional language candidates produced by ASR ensemble mode. They are kept
+    # for context reranking, while the main text remains the selected version.
+    alternatives: dict[str, str] = Field(default_factory=dict)
 
 
 class PageTranscript(BaseModel):

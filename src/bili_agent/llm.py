@@ -79,6 +79,7 @@ class LLMClient:
                 evidence,
                 reason="没有获取到 CC、ASR、OCR 或视觉证据，无法可靠总结。",
             )
+
         if self._client is None:
             return self._fallback_summary(page, transcript, evidence)
         prompt = (
@@ -101,6 +102,48 @@ class LLMClient:
                 evidence,
                 reason="LLM 总结请求失败，已自动使用内容证据降级。",
             )
+
+    async def rerank_transcript(self, transcript: PageTranscript) -> PageTranscript:
+        """Choose among multilingual ASR candidates using page-level context."""
+        candidates = [
+            (index, segment)
+            for index, segment in enumerate(transcript.segments)
+            if segment.alternatives
+        ]
+        if not candidates or self._client is None:
+            return transcript
+        lines = []
+        for index, segment in candidates[:120]:
+            options = {segment.language or "primary": segment.text, **segment.alternatives}
+            rendered = " | ".join(f"{language}: {text}" for language, text in options.items())
+            lines.append(f"{index}: {rendered}")
+        prompt = (
+            "请从每个 ASR 候选中选择最符合音频语境的一项。只输出合法 JSON，格式为 "
+            '{"selections":[{"index":0,"text":"候选原文"}]}。只能选择已有候选文本，不能翻译、改写或臆造。'
+            "选择标准：语义完整、语言连贯、符合相邻上下文；外语专有名词保留原文。\n\n"
+            f"分P：{transcript.page.title}\n候选片段：\n{self._clip(chr(10).join(lines))}"
+        )
+        try:
+            data = await self._chat_json(prompt)
+            allowed = {}
+            for index, segment in candidates:
+                allowed[index] = {segment.text, *segment.alternatives.values()}
+            selections = {}
+            for item in data.get("selections", []):
+                if not isinstance(item, dict) or not str(item.get("index", "")).isdigit():
+                    continue
+                index = int(item["index"])
+                text = str(item.get("text", ""))
+                if index in allowed and text in allowed[index]:
+                    selections[index] = text
+            updated = [
+                segment.model_copy(update={"text": selections.get(index, segment.text)})
+                for index, segment in enumerate(transcript.segments)
+            ]
+            return transcript.model_copy(update={"segments": updated})
+        except Exception:
+            LOGGER.exception("第 %s P 的多语言候选重排失败，保留自动识别结果。", transcript.page.page_index + 1)
+            return transcript
 
     async def summarize_video(
         self,

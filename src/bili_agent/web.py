@@ -16,6 +16,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 from .agent import BiliAgent
+from .asr import AudioDownloader
 from .config import Settings
 from .infographic import render_infographic
 from .markdown import render_markdown
@@ -341,6 +342,9 @@ class WebHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/cover":
             self._serve_cover(parsed)
             return
+        if parsed.path == "/api/audio":
+            self._serve_audio(parsed)
+            return
         if parsed.path.startswith("/api/jobs/"):
             job_id = parsed.path.rsplit("/", 1)[-1]
             job = self.jobs.get(job_id)
@@ -616,6 +620,77 @@ class WebHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             LOGGER.warning("封面代理失败: %s", exc)
             _send_json(self, {"error": "封面暂时无法加载。"}, HTTPStatus.BAD_GATEWAY)
+
+    def _serve_audio(self, parsed) -> None:
+        """Serve only audio belonging to an analyzed session/page, with ranges."""
+        query = parse_qs(parsed.query)
+        session_id = query.get("session_id", [""])[0]
+        raw_page_index = query.get("page_index", [""])[0]
+        if not session_id or not raw_page_index.isdigit():
+            _send_json(self, {"error": "音频参数无效。"}, HTTPStatus.BAD_REQUEST)
+            return
+        result = self.store.get(session_id)
+        if not result:
+            _send_json(self, {"error": "分析会话不存在或已过期。"}, HTTPStatus.NOT_FOUND)
+            return
+        page_index = int(raw_page_index)
+        page_analysis = next((item for item in result.pages if item.page.page_index == page_index), None)
+        if page_analysis is None:
+            _send_json(self, {"error": "该分P不在当前分析会话中。"}, HTTPStatus.NOT_FOUND)
+            return
+        page = page_analysis.page
+        page_url = f"{result.metadata.url}{'&' if '?' in result.metadata.url else '?'}p={page.page_index + 1}"
+        try:
+            downloader = AudioDownloader(self.settings.asr_cache_dir, self.settings.asr_audio_format)
+            audio_path = asyncio.run(downloader.download(page_url, page))
+            audio_path = Path(audio_path).resolve()
+            cache_root = self.settings.asr_cache_dir.resolve()
+            if cache_root not in audio_path.parents or not audio_path.is_file():
+                raise ValueError("音频文件路径不在缓存目录内。")
+            self._send_audio_file(audio_path)
+        except Exception as exc:
+            LOGGER.warning("音频对照加载失败 session=%s p=%s: %s", session_id[:8], page_index + 1, exc)
+            _send_json(self, {"error": "音频暂时无法加载，请确认 yt-dlp 和 ffmpeg 可用。"}, HTTPStatus.BAD_GATEWAY)
+
+    def _send_audio_file(self, path: Path) -> None:
+        size = path.stat().st_size
+        start = 0
+        end = size - 1
+        range_header = self.headers.get("Range", "")
+        if range_header.startswith("bytes="):
+            requested = range_header.removeprefix("bytes=").split(",", 1)[0].strip()
+            left, _, right = requested.partition("-")
+            if left.isdigit():
+                start = int(left)
+                end = int(right) if right.isdigit() else end
+            elif right.isdigit():
+                length = int(right)
+                start = max(size - length, 0)
+            if start >= size or start > end:
+                self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.end_headers()
+                return
+            end = min(end, size - 1)
+        length = end - start + 1
+        content_type = mimetypes.guess_type(str(path))[0] or "audio/mp4"
+        self.send_response(HTTPStatus.PARTIAL_CONTENT if range_header else HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(length))
+        self.send_header("Accept-Ranges", "bytes")
+        if range_header:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        self.send_header("Cache-Control", "private, max-age=3600")
+        self.end_headers()
+        with path.open("rb") as stream:
+            stream.seek(start)
+            remaining = length
+            while remaining:
+                chunk = stream.read(min(1024 * 1024, remaining))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
 
     def _serve_static(self, path: str) -> None:
         relative = unquote(path.removeprefix("/")) or "index.html"

@@ -53,6 +53,10 @@ bili-agent analyze "BV1xx411c7mD" --enable-asr --output notes.md
 
 启用 ASR 后，程序通过 `yt-dlp` 下载适合转写的音频，再交给 faster-whisper 转写。默认使用速度更快的 `base` 模型、`int8`、单束搜索和低码率音频；想提高识别质量可将 `ASR_MODEL=small`，并适当增大 `ASR_BEAM_SIZE`。音频保存在 `ASR_CACHE_DIR`，需要本机可用的 ffmpeg。
 
+ASR 默认使用 `ASR_LANGUAGE=auto` 自动检测语种，支持中文、日语、英语等 faster-whisper 多语言模型覆盖的语言。若音频较短、混合语言较多或自动检测不稳定，可在 `.env` 中固定语言，例如 `ASR_LANGUAGE=ja`（日语）、`ASR_LANGUAGE=en`（英语）或 `ASR_LANGUAGE=zh`（中文）。不要使用 `.en` 结尾的英语专用 Whisper 模型，否则无法识别日语和中文。
+
+如果需要“多语言候选后再选择”，可配置 `ASR_CANDIDATE_LANGUAGES=zh,ja,en`。程序会保留同一时间片的候选文本；`ASR_RERANK_MODE=confidence` 使用转写置信度选择，`ASR_RERANK_MODE=llm` 则将候选和分P上下文交给 LLM 做页面级选择。候选模式会增加转写时间，默认关闭以保持速度。
+
 如果本机有 NVIDIA CUDA 环境，建议设置 `ASR_DEVICE=cuda`、`ASR_COMPUTE_TYPE=float16`；没有 CUDA 时使用 `ASR_DEVICE=cpu`、`ASR_COMPUTE_TYPE=int8`。
 
 ## 项目结构
@@ -81,6 +85,8 @@ src/bili_agent/
 上线、Docker、HTTPS、Git 分支和回滚方案请参阅 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。
 
 聊天问答内置元数据查询、整体总结、章节时间线、知识点提取、字幕检索和证据问答技能；短追问会自动结合当前会话上下文进行检索。
+
+分析完成后，右侧“转写对照”会显示每条 CC/ASR 文本的时间戳和播放按钮。首次点击某个分P的播放按钮时，程序通过 `yt-dlp` 懒下载并缓存该分P音频，随后从对应时间点播放，支持暂停、拖动和反复对照；音频接口只允许访问当前分析会话中已选的分P。
 
 Web 面板可通过 `WEB_AUTH_TOKEN` 开启 Bearer Token 保护；本地默认留空，公网部署时请同时配置 HTTPS 和反向代理认证。
 

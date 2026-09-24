@@ -167,6 +167,10 @@ bili-agent analyze "BVxxxx" --enable-asr --output notes.md
 
 处理流程是：优先请求 CC 字幕；确认无字幕后才用 `yt-dlp` 下载对应分 P 音频并加载 faster-whisper 转写，最后纳入总结、Markdown 和问答检索。默认使用速度更快的 `base` 模型、`int8`、单束搜索和低码率音频；若更看重质量，可设置 `ASR_MODEL=small`，并适当增大 `ASR_BEAM_SIZE`。
 
+ASR 默认通过 `ASR_LANGUAGE=auto` 自动检测语种，因此可以识别日语、英语、中文等多语言音频。遇到短音频或混合语言自动判断不稳定时，可固定语言：`ASR_LANGUAGE=ja`、`ASR_LANGUAGE=en` 或 `ASR_LANGUAGE=zh`。使用多语言模型（如 `base`、`small`、`medium`、`large-v3`），不要使用 `.en` 英语专用模型。
+
+需要上下文选择时，可以设置 `ASR_CANDIDATE_LANGUAGES=zh,ja,en` 生成多语言候选。`ASR_RERANK_MODE=confidence` 按 ASR 置信度选择，`ASR_RERANK_MODE=llm` 按分P上下文让 LLM 选择已有候选文本。候选模式会重复解码音频，默认关闭；推荐先用 `auto`，只对混合语言或识别不稳定的视频开启。
+
 如果本机有 NVIDIA CUDA 环境，建议设置 `ASR_DEVICE=cuda`、`ASR_COMPUTE_TYPE=float16`；没有 CUDA 时使用 `ASR_DEVICE=cpu`、`ASR_COMPUTE_TYPE=int8`。
 
 ## 7. 多模态视频
@@ -204,6 +208,8 @@ bili-agent --verbose analyze "BVxxxx" --output notes.md
 ### 没有字幕
 
 B 站并非每个视频都提供公开 CC 字幕。默认程序会在 Markdown 中标注无字幕；需要转写时使用 ASR 选项。
+
+分析完成后，聊天面板右侧的“转写对照”会为每条 CC/ASR 文本提供播放按钮。首次点击时按需下载并缓存对应分P音频，从该条文本的时间点开始播放，便于核对语气和识别内容；如果浏览器提示无法播放，请确认 yt-dlp、ffmpeg 和当前音频格式可用。
 
 ### LLM 返回格式错误
 

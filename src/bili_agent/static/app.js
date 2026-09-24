@@ -22,6 +22,13 @@ function formatEvidenceRange(item) {
   return `P${Number(item.page_index ?? 0) + 1} ${range}`;
 }
 
+function formatTranscriptTime(seconds) {
+  const total = Math.max(0, Number(seconds || 0));
+  const m = Math.floor(total / 60);
+  const s = Math.floor(total % 60);
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
 function modalityLabel(modality) {
   return ({cc: 'CC', asr: 'ASR', ocr: 'OCR', vision: '视觉', audio_event: '音频', metadata: '元数据'})[modality] || modality;
 }
@@ -168,6 +175,46 @@ function renderDetails(result) {
   const timeline = result.timeline || [];
   $('evidence-count').textContent = timeline.length;
   $('evidence-list').innerHTML = timeline.length ? timeline.slice(0, 80).map((item) => `<div class="evidence-item"><div class="evidence-head"><span class="evidence-modality ${escapeHtml(item.modality)}">${escapeHtml(modalityLabel(item.modality))}</span><span class="evidence-time">${escapeHtml(formatEvidenceRange(item))}</span></div><div class="evidence-text">${escapeHtml(item.content)}</div></div>`).join('') : '<div class="muted">暂无多模态证据</div>';
+  renderTranscripts(result);
+}
+
+function renderTranscripts(result) {
+  const pages = result.pages || [];
+  const rows = pages.flatMap((item) => {
+    const transcript = item.transcript || {};
+    if (!transcript.segments?.length) return [`<div class="transcript-page"><div class="transcript-page-title">P${Number(item.page.page_index) + 1} · ${escapeHtml(item.page.title)}</div><div class="muted">${escapeHtml(transcript.notice || '没有可用转写')}</div></div>`];
+    return [`<div class="transcript-page"><div class="transcript-page-title">P${Number(item.page.page_index) + 1} · ${escapeHtml(item.page.title)}</div>${transcript.segments.map((segment) => `<div class="transcript-row"><button class="transcript-play" type="button" title="播放这段音频" aria-label="播放 ${formatTranscriptTime(segment.start)}" data-page-index="${Number(item.page.page_index)}" data-start="${Number(segment.start)}" data-end="${Number(segment.end)}">▶</button><span class="transcript-time">${escapeHtml(formatTranscriptTime(segment.start))}</span><span class="transcript-text">${escapeHtml(segment.text)}</span></div>`).join('')}</div>`];
+  });
+  $('transcript-list').innerHTML = rows.length ? rows.join('') : '<div class="muted">分析后显示带时间戳的 CC / ASR 文本</div>';
+  $('transcript-audio').removeAttribute('src');
+  $('transcript-audio').load();
+  $('audio-status').textContent = '点击文本旁的播放按钮，按时间点对照语气和内容';
+  $('transcript-list').querySelectorAll('.transcript-play').forEach((button) => button.addEventListener('click', () => playTranscriptSegment(button)));
+}
+
+function playTranscriptSegment(button) {
+  if (!state.sessionId) return toast('请先完成一次分析');
+  const audio = $('transcript-audio');
+  const pageIndex = Number(button.dataset.pageIndex);
+  const start = Number(button.dataset.start || 0);
+  const end = Number(button.dataset.end || start + 4);
+  const source = `/api/audio?session_id=${encodeURIComponent(state.sessionId)}&page_index=${encodeURIComponent(pageIndex)}`;
+  state.audioEnd = end;
+  document.querySelectorAll('.transcript-play.active').forEach((item) => item.classList.remove('active'));
+  button.classList.add('active');
+  $('audio-status').textContent = `正在准备 P${pageIndex + 1} ${formatTranscriptTime(start)} 音频…`;
+  const seekAndPlay = () => {
+    audio.currentTime = start;
+    audio.play().then(() => { $('audio-status').textContent = `播放中 · P${pageIndex + 1} ${formatTranscriptTime(start)}`; }).catch(() => toast('浏览器无法播放该音频格式'));
+  };
+  if (audio.dataset.pageIndex !== String(pageIndex) || !audio.src) {
+    audio.dataset.pageIndex = String(pageIndex);
+    audio.src = source;
+    audio.addEventListener('loadedmetadata', seekAndPlay, {once: true});
+    audio.load();
+  } else {
+    seekAndPlay();
+  }
 }
 
 async function analyze(video) {
@@ -294,7 +341,7 @@ function resetSession() {
   $('conversation').innerHTML = `<div class="welcome-block" id="welcome-block"><div class="welcome-kicker">VIDEO RESEARCH DESK</div><h1>把一个视频，<br><em>变成你的知识库。</em></h1><p>输入一个链接，开始这段视频研究。</p><div class="starter-row"><button class="starter" data-question="这个视频主要讲了什么？">概括这个视频 <span>↗</span></button><button class="starter" data-question="视频中最重要的三个知识点是什么？">提取知识点 <span>↗</span></button></div></div>`;
   $('composer-form').classList.remove('hidden'); $('question-form').classList.add('hidden'); $('video-input').value = ''; $('crumb-title').textContent = '新会话'; $('composer-hint').textContent = '先输入视频链接，建立分析会话';
   $('video-card').className = 'video-card empty-card'; $('video-card').innerHTML = '<div class="video-cover placeholder-cover"><span>BV</span></div><div class="empty-title">等待一个视频</div><div class="empty-copy">分析完成后，这里会显示视频信息和章节。</div>';
-  $('metadata-block').classList.add('hidden'); $('summary-text').className = 'summary-text muted'; $('summary-text').textContent = '暂无内容'; $('chapter-count').textContent = '0'; $('chapter-list').innerHTML = '<div class="muted">分析后显示章节</div>'; $('evidence-count').textContent = '0'; $('evidence-list').innerHTML = '<div class="muted">分析后显示字幕、ASR、OCR 和视觉证据</div>'; renderSessions(); bindStarters();
+  $('metadata-block').classList.add('hidden'); $('summary-text').className = 'summary-text muted'; $('summary-text').textContent = '暂无内容'; $('chapter-count').textContent = '0'; $('chapter-list').innerHTML = '<div class="muted">分析后显示章节</div>'; $('evidence-count').textContent = '0'; $('evidence-list').innerHTML = '<div class="muted">分析后显示字幕、ASR、OCR 和视觉证据</div>'; $('transcript-audio').pause(); $('transcript-audio').removeAttribute('src'); $('transcript-audio').load(); $('audio-status').textContent = '点击文本旁的播放按钮，按时间点对照语气和内容'; $('transcript-list').innerHTML = '<div class="muted">分析后显示带时间戳的 CC / ASR 文本</div>'; renderSessions(); bindStarters();
 }
 
 function bindStarters() { document.querySelectorAll('.starter').forEach((button) => button.addEventListener('click', () => { if (!state.sessionId) return toast('请先输入视频链接'); ask(button.dataset.question); })); }
@@ -324,4 +371,5 @@ $('download-infographic').addEventListener('click', () => {
 $('toggle-inspector').addEventListener('click', () => $('inspector').classList.toggle('hidden'));
 $('close-inspector').addEventListener('click', () => $('inspector').classList.add('hidden'));
 $('download-note').addEventListener('click', () => { if (!state.result) return toast('请先完成一次分析'); const blob = new Blob([state.result ? window.lastMarkdown || `# ${state.result.metadata.title}\n\n${state.result.summary.overall_summary}` : ''], {type: 'text/markdown;charset=utf-8'}); const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `${state.result.metadata.title || 'bili-note'}.md`; link.click(); URL.revokeObjectURL(link.href); });
+$('transcript-audio').addEventListener('timeupdate', () => { const audio = $('transcript-audio'); if (state.audioEnd && audio.currentTime >= state.audioEnd) { audio.pause(); $('audio-status').textContent = '片段播放结束'; } });
 bindStarters();

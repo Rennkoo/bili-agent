@@ -27,6 +27,25 @@ def _as_int(value: str | None, default: int, minimum: int) -> int:
         return default
 
 
+def _as_language(value: str | None) -> str | None:
+    """Return a Whisper language code, or None for automatic detection."""
+    normalized = (value or "auto").strip().lower()
+    if not normalized or normalized == "auto":
+        return None
+    if normalized in {"zh", "en", "ja", "ko", "yue", "fr", "de", "es", "ru"}:
+        return normalized
+    return None
+
+
+def _as_languages(value: str | None) -> tuple[str, ...]:
+    values = []
+    for item in (value or "").split(","):
+        language = _as_language(item)
+        if language and language not in values:
+            values.append(language)
+    return tuple(values)
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     llm_api_key: str | None
@@ -40,6 +59,9 @@ class Settings:
     asr_device: str
     asr_compute_type: str
     asr_cache_dir: Path
+    asr_language: str | None = None
+    asr_candidate_languages: tuple[str, ...] = ()
+    asr_rerank_mode: str = "none"
     llm_timeout_seconds: float = 90.0
     max_transcript_chars: int = 24000
     multimodal_enabled: bool = False
@@ -79,6 +101,11 @@ class Settings:
             asr_device=os.getenv("ASR_DEVICE", "cpu"),
             asr_compute_type=os.getenv("ASR_COMPUTE_TYPE", "int8"),
             asr_cache_dir=Path(os.getenv("ASR_CACHE_DIR", ".bili-agent/audio")),
+            asr_language=_as_language(os.getenv("ASR_LANGUAGE")),
+            asr_candidate_languages=_as_languages(os.getenv("ASR_CANDIDATE_LANGUAGES")),
+            asr_rerank_mode=os.getenv("ASR_RERANK_MODE", "none").strip().lower()
+            if os.getenv("ASR_RERANK_MODE", "none").strip().lower() in {"none", "confidence", "llm"}
+            else "none",
             llm_timeout_seconds=_as_float(os.getenv("LLM_TIMEOUT_SECONDS"), 90.0, 1.0),
             max_transcript_chars=_as_int(os.getenv("MAX_TRANSCRIPT_CHARS"), 24000, 1000),
             multimodal_enabled=_as_bool(os.getenv("MULTIMODAL_ENABLED")),
