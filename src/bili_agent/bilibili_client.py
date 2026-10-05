@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from .asr import ASRTranscriber, AudioDownloader
+from .asr import ASRTranscriber, AudioDownloadError, AudioDownloader
 from .config import Settings
 from .models import Caption, PageInfo, PageTranscript, VideoIdentifier, VideoMetadata
 
@@ -121,8 +121,8 @@ class BilibiliClient:
                         if progress:
                             try:
                                 await progress(
-                                    "asr",
-                                    position,
+                                    "asr_heartbeat",
+                                    position - 0.5,
                                     len(pages),
                                     f"{label}（已运行 {elapsed} 秒）",
                                 )
@@ -165,6 +165,7 @@ class BilibiliClient:
                 transcripts.append(PageTranscript(page=page, source="cc", segments=segments))
                 continue
 
+            page_notice = None
             if asr_enabled and asr_transcriber and audio_downloader:
                 if progress:
                     await progress(
@@ -231,15 +232,24 @@ class BilibiliClient:
                         ),
                         timeout=self.settings.asr_timeout_seconds,
                     )
-                    transcripts.append(PageTranscript(page=page, source="asr", segments=asr_segments))
+                    if asr_segments:
+                        transcripts.append(PageTranscript(page=page, source="asr", segments=asr_segments))
+                    else:
+                        page_notice = "音频已获取，但 ASR 未检测到可识别语音（可能是音乐、环境声或静音）。"
+                        transcripts.append(PageTranscript(page=page, source="none", notice=page_notice))
                     continue
                 except asyncio.TimeoutError:
+                    page_notice = "音频转写超时，已跳过该分P；可降低 ASR 模型或改用 GPU。"
                     LOGGER.warning(
                         "第 %s P 的 ASR 超时（%.1f 秒），跳过并继续分析。",
                         page.page_index + 1,
                         self.settings.asr_timeout_seconds,
                     )
+                except AudioDownloadError as exc:
+                    page_notice = str(exc)
+                    LOGGER.warning("第 %s P 音频下载未完成: %s", page.page_index + 1, exc)
                 except Exception:
+                    page_notice = "音频下载或转写失败，已保留元数据降级结果；请查看服务日志。"
                     LOGGER.exception("第 %s P 的 ASR 失败，保留无字幕状态。", page.page_index + 1)
                 finally:
                     if progress:
@@ -250,7 +260,7 @@ class BilibiliClient:
                             f"第 {page.page_index + 1} P 的音频处理完成",
                         )
 
-            notice = asr_notice or "该分P没有可用 CC 字幕；ASR 默认未启用。"
+            notice = page_notice or asr_notice or "该分P没有可用 CC 字幕；ASR 默认未启用。"
             transcripts.append(PageTranscript(page=page, source="none", notice=notice))
             LOGGER.warning("第 %s P 没有可用 CC 字幕。", page.page_index + 1)
         return transcripts

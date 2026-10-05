@@ -17,6 +17,20 @@ Copy-Item .env.example .env
 
 部分 B 站字幕需要登录态，可在 `.env` 中填写 `BILI_SESSDATA`、`BILI_BILI_JCT` 和 `BILI_BUVID3`。请勿把包含真实 Cookie 的 `.env` 提交到版本库。
 
+## GitHub 部署
+
+仓库默认不包含 `.env`、B 站 Cookie、API Key、模型缓存、音频缓存和运行数据库。复制 `.env.example` 为 `.env` 后再填写本机配置。
+
+```bash
+git clone <你的 GitHub 仓库地址> bili-agent
+cd bili-agent
+cp .env.example .env
+python -m pip install -e ".[dev]"
+python -m pytest -q
+```
+
+推荐先在本机验证，再使用 Docker 部署。公网使用前请配置 `WEB_AUTH_TOKEN`，并通过 HTTPS 反向代理访问，具体见 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。
+
 ## 使用
 
 ```powershell
@@ -91,3 +105,5 @@ src/bili_agent/
 Web 面板可通过 `WEB_AUTH_TOKEN` 开启 Bearer Token 保护；本地默认留空，公网部署时请同时配置 HTTPS 和反向代理认证。
 
 长视频会并发获取各分P CC 字幕，并在面板中显示 `P x / 总P数` 进度。`CAPTION_TIMEOUT_SECONDS` 控制单个分P字幕请求超时，`MAX_CONCURRENT_CAPTION_FETCHES` 控制字幕并发数。启用 ASR 后会显示音频下载和转写进度，`ASR_TIMEOUT_SECONDS` 控制单个分P的 ASR 总超时时间。
+
+长分P会按 `LLM_CHUNK_SEGMENTS` 分块发送给 LLM，再合并章节和知识点；`LLM_CHUNK_CONCURRENCY` 控制并发请求数。分块只限制 LLM 输入，完整字幕和 ASR 证据仍会保留到 Markdown、JSON 以及问答索引中。ASR 进度会从 42% 推进到约 70%，避免长音频在界面上看起来像卡住。

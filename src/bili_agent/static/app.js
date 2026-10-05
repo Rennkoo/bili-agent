@@ -1,5 +1,6 @@
 const state = { sessionId: null, result: null, sessions: [], sessionData: {}, infographicUrl: null, infographicFilename: 'bili-infographic.svg', pendingVideo: '', pendingMetadata: null };
 const $ = (id) => document.getElementById(id);
+const MAX_TRANSCRIPT_ROWS = 240;
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (char) => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;'}[char]));
@@ -180,11 +181,18 @@ function renderDetails(result) {
 
 function renderTranscripts(result) {
   const pages = result.pages || [];
+  let remaining = MAX_TRANSCRIPT_ROWS;
+  let hiddenCount = 0;
   const rows = pages.flatMap((item) => {
     const transcript = item.transcript || {};
     if (!transcript.segments?.length) return [`<div class="transcript-page"><div class="transcript-page-title">P${Number(item.page.page_index) + 1} · ${escapeHtml(item.page.title)}</div><div class="muted">${escapeHtml(transcript.notice || '没有可用转写')}</div></div>`];
-    return [`<div class="transcript-page"><div class="transcript-page-title">P${Number(item.page.page_index) + 1} · ${escapeHtml(item.page.title)}</div>${transcript.segments.map((segment) => `<div class="transcript-row"><button class="transcript-play" type="button" title="播放这段音频" aria-label="播放 ${formatTranscriptTime(segment.start)}" data-page-index="${Number(item.page.page_index)}" data-start="${Number(segment.start)}" data-end="${Number(segment.end)}">▶</button><span class="transcript-time">${escapeHtml(formatTranscriptTime(segment.start))}</span><span class="transcript-text">${escapeHtml(segment.text)}</span></div>`).join('')}</div>`];
+    const visibleSegments = transcript.segments.slice(0, Math.max(remaining, 0));
+    remaining -= visibleSegments.length;
+    hiddenCount += transcript.segments.length - visibleSegments.length;
+    if (!visibleSegments.length) return [];
+    return [`<div class="transcript-page"><div class="transcript-page-title">P${Number(item.page.page_index) + 1} · ${escapeHtml(item.page.title)}</div>${visibleSegments.map((segment) => `<div class="transcript-row"><button class="transcript-play" type="button" title="播放这段音频" aria-label="播放 ${formatTranscriptTime(segment.start)}" data-page-index="${Number(item.page.page_index)}" data-start="${Number(segment.start)}" data-end="${Number(segment.end)}">▶</button><span class="transcript-time">${escapeHtml(formatTranscriptTime(segment.start))}</span><span class="transcript-text">${escapeHtml(segment.text)}</span></div>`).join('')}</div>`];
   });
+  if (hiddenCount > 0) rows.push(`<div class="transcript-limit">已显示前 ${MAX_TRANSCRIPT_ROWS} 条，另有 ${hiddenCount} 条完整内容已保存在 Markdown 和问答索引中。</div>`);
   $('transcript-list').innerHTML = rows.length ? rows.join('') : '<div class="muted">分析后显示带时间戳的 CC / ASR 文本</div>';
   $('transcript-audio').removeAttribute('src');
   $('transcript-audio').load();
@@ -211,6 +219,10 @@ function playTranscriptSegment(button) {
     audio.dataset.pageIndex = String(pageIndex);
     audio.src = source;
     audio.addEventListener('loadedmetadata', seekAndPlay, {once: true});
+    audio.addEventListener('error', () => {
+      button.classList.remove('active');
+      $('audio-status').textContent = '音频加载失败：可能是视频权限、登录状态或 ffmpeg 配置问题';
+    }, {once: true});
     audio.load();
   } else {
     seekAndPlay();

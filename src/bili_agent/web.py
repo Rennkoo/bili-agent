@@ -16,7 +16,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 from .agent import BiliAgent
-from .asr import AudioDownloader
+from .asr import AudioDownloadError, AudioDownloader
 from .config import Settings
 from .infographic import render_infographic
 from .markdown import render_markdown
@@ -648,6 +648,9 @@ class WebHandler(BaseHTTPRequestHandler):
             if cache_root not in audio_path.parents or not audio_path.is_file():
                 raise ValueError("音频文件路径不在缓存目录内。")
             self._send_audio_file(audio_path)
+        except AudioDownloadError as exc:
+            LOGGER.warning("音频对照加载失败 session=%s p=%s code=%s: %s", session_id[:8], page_index + 1, exc.code, exc)
+            _send_json(self, {"error": str(exc), "code": exc.code}, HTTPStatus.BAD_GATEWAY)
         except Exception as exc:
             LOGGER.warning("音频对照加载失败 session=%s p=%s: %s", session_id[:8], page_index + 1, exc)
             _send_json(self, {"error": "音频暂时无法加载，请确认 yt-dlp 和 ffmpeg 可用。"}, HTTPStatus.BAD_GATEWAY)

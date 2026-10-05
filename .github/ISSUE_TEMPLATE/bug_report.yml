@@ -1,0 +1,32 @@
+name: Bug report
+description: 报告可复现的问题
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请不要在 Issue 中粘贴 API Key、B 站 Cookie 或完整服务日志中的敏感信息。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 问题描述
+      description: 请说明实际结果和预期结果。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 请提供脱敏后的命令、视频类型和相关配置。
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本或提交号
+  - type: textarea
+    id: logs
+    attributes:
+      label: 脱敏日志
+      render: text

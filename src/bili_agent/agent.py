@@ -109,9 +109,9 @@ class BiliAgent:
                 (22 + int(20 * current / max(total, 1)))
                 if phase == "cc"
                 else (
-                    42 + int(6 * min(max(current / max(total, 1), 0.0), 1.0))
-                    if phase == "asr_progress"
-                    else 42 + int(6 * current / max(total, 1))
+                    42 + int(28 * min(max(current / max(total, 1), 0.0), 1.0))
+                    if phase in {"asr_progress", "asr_heartbeat"}
+                    else 42 + int(28 * current / max(total, 1))
                 ),
                 message,
             ),
@@ -120,7 +120,7 @@ class BiliAgent:
             transcripts = await asyncio.gather(
                 *(self.llm.rerank_transcript(transcript) for transcript in transcripts)
             )
-        await report("transcript", 48, "字幕/语音内容已整理，正在生成时间线")
+        await report("transcript", 70, "字幕/语音内容已整理，正在生成时间线")
         page_summaries = []
         pages = []
         timeline: list[EvidenceSegment] = []
@@ -145,7 +145,7 @@ class BiliAgent:
             )
         use_multimodal = self.settings.multimodal_enabled if enable_multimodal is None else enable_multimodal
         if use_multimodal:
-            await report("visual", 54, "正在提取关键帧、OCR 和画面信息")
+            await report("visual", 72, "正在提取关键帧、OCR 和画面信息")
             visual = MultimodalExtractor(self.settings, self.llm)
             for transcript in transcripts:
                 visual_evidence = await visual.extract_page(metadata.url, transcript.page)
@@ -153,7 +153,7 @@ class BiliAgent:
                 timeline.extend(_with_global_time(item, offset) for item in visual_evidence)
                 await report(
                     "visual",
-                    min(70, 54 + int(16 * ((transcript.page.page_index + 1) / max(len(transcripts), 1)))),
+                    min(78, 72 + int(6 * ((transcript.page.page_index + 1) / max(len(transcripts), 1)))),
                     f"正在分析第 {transcript.page.page_index + 1} P 的画面",
                 )
         for transcript in transcripts:
@@ -161,7 +161,7 @@ class BiliAgent:
             page_summary = await self.llm.summarize_page(transcript.page, transcript, page_evidence)
             page_summaries.append(page_summary)
             pages.append(PageAnalysis(page=transcript.page, transcript=transcript, summary=page_summary))
-            await report("summary", min(88, 52 + int(32 * (len(pages) / max(len(transcripts), 1)))), f"正在总结第 {transcript.page.page_index + 1} P")
+            await report("summary", min(96, 78 + int(18 * (len(pages) / max(len(transcripts), 1)))), f"正在总结第 {transcript.page.page_index + 1} P")
         summary = await self.llm.summarize_video(metadata, page_summaries, has_evidence=bool(timeline))
         await report("complete", 100, "分析完成")
         timeline.sort(
@@ -172,9 +172,9 @@ class BiliAgent:
             )
         )
         page_summary_degraded = any(
-            page.summary.overall_summary.startswith("[降级内容]") for page in pages
+            page.summary.overall_summary.startswith(("[降级内容]", "[部分降级]")) for page in pages
         )
-        overall_summary_degraded = summary.overall_summary.startswith("[降级内容]")
+        overall_summary_degraded = summary.overall_summary.startswith(("[降级内容]", "[部分降级]"))
         degraded_reason = None
         if not timeline:
             degraded_reason = "没有获取到 CC、ASR、OCR 或视觉证据，当前仅保留元数据降级结果。"

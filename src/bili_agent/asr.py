@@ -11,6 +11,14 @@ from .models import Caption, PageInfo
 LOGGER = logging.getLogger(__name__)
 
 
+class AudioDownloadError(RuntimeError):
+    """A user-facing failure while retrieving a page's audio."""
+
+    def __init__(self, code: str, message: str):
+        self.code = code
+        super().__init__(message)
+
+
 class ASRTranscriber(Protocol):
     async def transcribe(self, audio_path: Path) -> list[Caption]: ...
 
@@ -41,22 +49,74 @@ class AudioDownloader:
         if cached:
             LOGGER.info("复用已缓存音频: %s", cached[0])
             return cached[0]
-        options = {
-            "format": self.format_selector,
-            "outtmpl": str(self.output_dir / f"{stem}.%(ext)s"),
-            "noplaylist": True,
-            "quiet": True,
-            "no_warnings": True,
-        }
-        with YoutubeDL(options) as ydl:
-            info = ydl.extract_info(url, download=True)
-            prepared = Path(ydl.prepare_filename(info))
-        if prepared.exists():
-            return prepared
-        matches = sorted(self.output_dir.glob(f"{stem}.*"))
-        if matches:
-            return matches[0]
-        raise FileNotFoundError(f"yt-dlp 未找到下载后的音频文件: {stem}")
+        selectors = self._format_selectors()
+        last_error: Exception | None = None
+        for selector in selectors:
+            options = {
+                "format": selector,
+                "outtmpl": str(self.output_dir / f"{stem}.%(ext)s"),
+                "noplaylist": True,
+                "quiet": True,
+                "no_warnings": True,
+            }
+            try:
+                LOGGER.info("尝试下载 P%s 音频格式: %s", page.page_index + 1, selector)
+                with YoutubeDL(options) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    prepared = Path(ydl.prepare_filename(info))
+                if prepared.exists():
+                    return prepared
+                matches = sorted(self.output_dir.glob(f"{stem}.*"))
+                if matches:
+                    return matches[0]
+                raise FileNotFoundError(f"yt-dlp 未找到下载后的音频文件: {stem}")
+            except Exception as exc:
+                last_error = exc
+                classified = self.classify_error(exc)
+                if classified.code in {"restricted", "blocked"}:
+                    raise classified from exc
+                LOGGER.warning("P%s 音频格式 %s 不可用，将尝试备用格式: %s", page.page_index + 1, selector, exc)
+
+        if last_error is not None:
+            raise self.classify_error(last_error) from last_error
+        raise AudioDownloadError("download_failed", f"无法下载第 {page.page_index + 1} P 的音频。")
+
+    def _format_selectors(self) -> list[str]:
+        """Prefer the configured selector, then tolerate Bilibili format drift."""
+        candidates = [
+            self.format_selector,
+            "worst[acodec!=none]/worstaudio/bestaudio",
+            "bestaudio[ext=m4a]/bestaudio/worst[acodec!=none]",
+        ]
+        return list(dict.fromkeys(item.strip() for item in candidates if item and item.strip()))
+
+    @staticmethod
+    def classify_error(exc: Exception) -> AudioDownloadError:
+        text = str(exc)
+        normalized = text.lower()
+        if any(
+            marker in normalized
+            for marker in (
+                "only preview format is available",
+                "premium member",
+                "become a premium",
+                "大会员",
+                "会员专享",
+                "登录后观看",
+            )
+        ):
+            return AudioDownloadError(
+                "restricted",
+                "B站只提供预览或会员权限，无法下载完整音频；请登录有权限的账号后重试。",
+            )
+        if "requested format is not available" in normalized or "no video formats found" in normalized:
+            return AudioDownloadError(
+                "format_unavailable",
+                "B站当前没有可用的音频格式，可能是地区、登录状态或视频权限限制。",
+            )
+        if "ffmpeg" in normalized:
+            return AudioDownloadError("ffmpeg_missing", "音频处理需要 ffmpeg，请先安装并加入 PATH。")
+        return AudioDownloadError("download_failed", f"音频下载失败：{text[:240]}")
 
 
 class FasterWhisperTranscriber:

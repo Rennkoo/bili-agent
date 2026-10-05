@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -82,14 +83,22 @@ class LLMClient:
 
         if self._client is None:
             return self._fallback_summary(page, transcript, evidence)
+        if len(transcript.segments) > self.settings.llm_chunk_segments or len(evidence) > self.settings.llm_chunk_segments:
+            return await self._summarize_page_in_chunks(page, transcript, evidence)
+        # A long page can contain thousands of ASR segments. Keep the prompt
+        # representative while the full transcript remains available to notes
+        # and retrieval. Head/tail coverage is more useful than a head-only cut.
+        prompt_limit = self.settings.max_transcript_chars
+        if len(transcript.segments) > 600 or len(evidence) > 600:
+            prompt_limit = max(6000, prompt_limit // 2)
         prompt = (
             "请分析以下 B 站视频分P内容证据。证据可能来自 CC 字幕、ASR、OCR 或视觉分析。"
             "只输出合法 JSON，不要 Markdown 代码围栏，字段必须为 "
             "video_title、overall_summary、chapters、knowledge_points。chapters 每项包含 "
             "timestamp、title、summary、key_points；knowledge_points 每项包含 term、explanation。"
             "overall_summary 约 200 字，必须忠实于提供的内容证据，不要臆造。\n\n"
-            f"分P标题：{page.title}\n字幕或 ASR：\n{self._clip(transcript.text)}\n"
-            f"OCR/视觉证据：\n{self._clip(evidence_text)}"
+            f"分P标题：{page.title}\n字幕或 ASR：\n{self._clip(transcript.text, prompt_limit)}\n"
+            f"OCR/视觉证据：\n{self._clip(evidence_text, prompt_limit)}"
         )
         try:
             data = await self._chat_json(prompt)
@@ -102,6 +111,100 @@ class LLMClient:
                 evidence,
                 reason="LLM 总结请求失败，已自动使用内容证据降级。",
             )
+
+    async def _summarize_page_in_chunks(
+        self,
+        page: PageInfo,
+        transcript: PageTranscript,
+        evidence: list[EvidenceSegment],
+    ) -> VideoSummary:
+        """Summarize long pages in bounded time windows.
+
+        The complete transcript remains in the result. Only the LLM prompt is
+        chunked, which prevents a long page from timing out as one oversized
+        request while preserving time-aligned chapters and retrieval evidence.
+        """
+        chunk_size = max(self.settings.llm_chunk_segments, 100)
+        chunks = [
+            transcript.segments[index : index + chunk_size]
+            for index in range(0, len(transcript.segments), chunk_size)
+        ]
+        if not chunks:
+            return self._fallback_summary(page, transcript, evidence)
+
+        semaphore = asyncio.Semaphore(max(self.settings.llm_chunk_concurrency, 1))
+
+        async def summarize_chunk(index: int, segments: list) -> tuple[VideoSummary, bool]:
+            start = segments[0].start
+            end = segments[-1].end
+            segment_text = "\n".join(
+                f"[{format_timestamp(item.start)}] {item.text}" for item in segments
+            )
+            chunk_evidence = [
+                item
+                for item in evidence
+                if item.end >= start and item.start <= end
+            ]
+            evidence_text = "\n".join(
+                f"[{item.source_label} {format_timestamp(item.start)}] {item.content}"
+                for item in chunk_evidence
+            )
+            prompt = (
+                "请总结以下 B 站视频分P的一个连续时间片段，只输出合法 JSON，不要 Markdown 代码围栏。"
+                "字段必须为 video_title、overall_summary、chapters、knowledge_points；"
+                "chapters 每项包含 timestamp、title、summary、key_points；"
+                "knowledge_points 每项包含 term、explanation。"
+                "时间戳必须使用原视频分P的相对时间，不能从 00:00:00 重新开始。"
+                "只依据证据，不要臆造。\n\n"
+                f"分P标题：{page.title}\n时间片段：{format_timestamp(start)} - {format_timestamp(end)}\n"
+                f"字幕或 ASR：\n{self._clip(segment_text, self.settings.max_transcript_chars // 2)}\n"
+                f"OCR/视觉证据：\n{self._clip(evidence_text, self.settings.max_transcript_chars // 3)}"
+            )
+            async with semaphore:
+                try:
+                    data = await self._chat_json(prompt)
+                    return self._validate_summary(data, page.title), False
+                except Exception:
+                    LOGGER.exception(
+                        "第 %s P 的第 %s 个 LLM 分块总结失败，使用该时间片段降级内容。",
+                        page.page_index + 1,
+                        index + 1,
+                    )
+                    fallback_transcript = PageTranscript(page=page, source=transcript.source, segments=segments)
+                    return self._fallback_summary(
+                        page,
+                        fallback_transcript,
+                        chunk_evidence,
+                        reason="该时间片段 LLM 请求失败，已使用内容证据降级。",
+                    ), True
+
+        results = await asyncio.gather(
+            *(summarize_chunk(index, chunk) for index, chunk in enumerate(chunks))
+        )
+        summaries = [item[0] for item in results]
+        partially_degraded = any(item[1] for item in results)
+        chapters = [chapter for summary in summaries for chapter in summary.chapters]
+        points: list[KnowledgePoint] = []
+        seen_terms: set[str] = set()
+        for summary in summaries:
+            for point in summary.knowledge_points:
+                key = point.term.strip().casefold()
+                if key and key not in seen_terms:
+                    seen_terms.add(key)
+                    points.append(point)
+        overview = "；".join(
+            summary.overall_summary.removeprefix("[降级内容] ").strip()
+            for summary in summaries
+            if summary.overall_summary.strip()
+        )
+        if partially_degraded:
+            overview = "[部分降级] " + overview
+        return VideoSummary(
+            video_title=page.title,
+            overall_summary=overview[:1600],
+            chapters=chapters,
+            knowledge_points=points,
+        )
 
     async def rerank_transcript(self, transcript: PageTranscript) -> PageTranscript:
         """Choose among multilingual ASR candidates using page-level context."""
@@ -283,9 +386,13 @@ class LLMClient:
         data.setdefault("knowledge_points", [])
         return VideoSummary.model_validate(data)
 
-    def _clip(self, text: str) -> str:
-        limit = self.settings.max_transcript_chars
-        return text if len(text) <= limit else text[:limit] + "\n[字幕已截断]"
+    def _clip(self, text: str, limit: int | None = None) -> str:
+        limit = limit or self.settings.max_transcript_chars
+        if len(text) <= limit:
+            return text
+        head = max(limit * 2 // 3, 1)
+        tail = max(limit - head, 1)
+        return text[:head] + "\n[中间内容已截取，完整内容保存在笔记中]\n" + text[-tail:]
 
     @staticmethod
     def _fallback_summary(

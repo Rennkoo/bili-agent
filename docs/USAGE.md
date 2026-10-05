@@ -34,6 +34,8 @@ LLM_API_KEY=your-api-key
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_MODEL=gpt-4o-mini
 LLM_TIMEOUT_SECONDS=90
+LLM_CHUNK_SEGMENTS=400
+LLM_CHUNK_CONCURRENCY=2
 MAX_TRANSCRIPT_CHARS=24000
 MAX_CONCURRENT_ANALYSES=2
 MAX_QUESTION_CHARS=4000
@@ -57,6 +59,8 @@ VISION_MODEL=
 
 `LLM_TIMEOUT_SECONDS` 控制单次 LLM 请求超时；`MAX_TRANSCRIPT_CHARS` 控制发送给 LLM 的字幕最大字符数。
 
+当单个分P超过 `LLM_CHUNK_SEGMENTS` 条字幕或 ASR 片段时，程序会按连续时间片分块总结，再合并章节和去重知识点。`LLM_CHUNK_CONCURRENCY` 控制同时请求的分块数，默认值适合普通 API 网关；遇到限流时可改为 `1`。完整字幕不会被分块策略删除，仍会进入 Markdown、JSON 和问答检索索引。
+
 `MAX_CONCURRENT_ANALYSES` 限制同时运行的分析任务数；`MAX_QUESTION_CHARS` 和 `MAX_VIDEO_INPUT_CHARS` 限制问答与视频输入长度；`MAX_COVER_BYTES` 限制封面代理允许下载的最大字节数。
 
 `WEB_AUTH_TOKEN` 非空时，除健康检查和封面读取外的 Web API 都需要 `Authorization: Bearer <token>`。聊天面板第一次收到认证错误时会提示输入 Token，Token 只保存在当前浏览器会话。公网部署仍建议在 Caddy/Nginx 层额外启用 HTTPS 和用户认证。
@@ -66,6 +70,8 @@ VISION_MODEL=
 `STORAGE_DB_PATH` 指定本地 SQLite 文件。默认位于 `.bili-agent/bili-agent.sqlite3`，已被 Git 忽略；服务重启后会恢复已保存的会话和任务状态。
 
 长视频字幕获取采用受控并发，并按分P更新进度。可通过 `CAPTION_TIMEOUT_SECONDS` 和 `MAX_CONCURRENT_CAPTION_FETCHES` 调整单P超时与并发数；遇到单个分P失败时会跳过该P并继续后续分析。启用 ASR 时，面板会显示音频下载和转写阶段；`ASR_TIMEOUT_SECONDS` 控制单个分P的 ASR 总超时时间，超时后自动保留无字幕降级结果。
+
+ASR 阶段会持续报告音频下载、转写心跳和已处理时长。长音频的进度范围约为 `42%~70%`，因此看到几十秒没有新识别片段时，任务仍会继续运行；只有进入 `70%` 才表示语音内容已经整理完毕。
 
 默认开启无字幕时的 ASR。若不希望下载音频或执行转写，可在面板中取消勾选，或配置 `ASR_ENABLED=false`。如果不配置 `LLM_API_KEY`，程序仍然可以获取视频和可用内容证据；总结会使用字幕、ASR 或视觉证据截断作为降级内容，问答会返回检索到的证据片段和时间戳。
 
