@@ -34,6 +34,8 @@ LLM_API_KEY=your-api-key
 LLM_BASE_URL=https://api.openai.com/v1
 LLM_MODEL=gpt-4o-mini
 LLM_TIMEOUT_SECONDS=90
+LLM_MAX_RETRIES=2
+LLM_RETRY_BASE_SECONDS=1
 LLM_CHUNK_SEGMENTS=400
 LLM_CHUNK_CONCURRENCY=2
 MAX_TRANSCRIPT_CHARS=24000
@@ -58,6 +60,8 @@ VISION_MODEL=
 兼容 OpenAI Chat Completions 的服务通常只需要替换 `LLM_BASE_URL` 和 `LLM_MODEL`。
 
 `LLM_TIMEOUT_SECONDS` 控制单次 LLM 请求超时；`MAX_TRANSCRIPT_CHARS` 控制发送给 LLM 的字幕最大字符数。
+
+`LLM_MAX_RETRIES` 只重试超时、连接错误、429 和 5xx 等临时失败；参数错误和 JSON 格式不兼容不会重复重试。`LLM_RETRY_BASE_SECONDS` 控制指数退避的初始等待时间。
 
 当单个分P超过 `LLM_CHUNK_SEGMENTS` 条字幕或 ASR 片段时，程序会按连续时间片分块总结，再合并章节和去重知识点。`LLM_CHUNK_CONCURRENCY` 控制同时请求的分块数，默认值适合普通 API 网关；遇到限流时可改为 `1`。完整字幕不会被分块策略删除，仍会进入 Markdown、JSON 和问答检索索引。
 

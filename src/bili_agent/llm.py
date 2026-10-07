@@ -313,7 +313,7 @@ class LLMClient:
         if history:
             prompt += f"\n\n最近对话上下文（只用于理解省略指代，不作为事实来源）：\n{history}"
         try:
-            response = await self._client.chat.completions.create(
+            response = await self._chat_completion(
                 model=self.settings.llm_model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
@@ -329,7 +329,7 @@ class LLMClient:
             return None
         encoded = base64.b64encode(image_bytes).decode("ascii")
         try:
-            response = await self._client.chat.completions.create(
+            response = await self._chat_completion(
                 model=self.settings.vision_model or self.settings.llm_model,
                 messages=[
                     {
@@ -354,7 +354,7 @@ class LLMClient:
             "temperature": 0.2,
         }
         try:
-            response = await self._client.chat.completions.create(
+            response = await self._chat_completion(
                 **common, response_format={"type": "json_object"}
             )
         except Exception as exc:
@@ -366,7 +366,7 @@ class LLMClient:
             known_bad_request = error_type in {"badrequesterror", "unprocessableentityerror"}
             if not (format_error or known_bad_request):
                 raise
-            response = await self._client.chat.completions.create(**common)
+            response = await self._chat_completion(**common)
         content = response.choices[0].message.content or "{}"
         content = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", content, flags=re.IGNORECASE)
         try:
@@ -376,6 +376,52 @@ class LLMClient:
             if start < 0 or end <= start:
                 raise
             return json.loads(content[start : end + 1])
+
+    async def _chat_completion(self, **kwargs):
+        """Call the gateway with bounded retries for transient failures only."""
+        attempts = max(int(self.settings.llm_max_retries), 0) + 1
+        for attempt in range(attempts):
+            try:
+                return await self._client.chat.completions.create(**kwargs)
+            except Exception as exc:
+                if attempt >= attempts - 1 or not self._is_retryable_error(exc):
+                    raise
+                delay = max(float(self.settings.llm_retry_base_seconds), 0.0) * (2**attempt)
+                LOGGER.warning(
+                    "LLM 临时错误，将在 %.1f 秒后重试（%s/%s）：%s",
+                    delay,
+                    attempt + 1,
+                    attempts - 1,
+                    type(exc).__name__,
+                )
+                await asyncio.sleep(delay)
+
+    @staticmethod
+    def _is_retryable_error(exc: Exception) -> bool:
+        status = getattr(exc, "status_code", None)
+        if status is None:
+            response = getattr(exc, "response", None)
+            status = getattr(response, "status_code", None)
+        if status is not None:
+            try:
+                return int(status) in {408, 409, 425, 429} or int(status) >= 500
+            except (TypeError, ValueError):
+                pass
+        error_name = type(exc).__name__.lower()
+        error_text = str(exc).lower()
+        return any(
+            marker in error_name or marker in error_text
+            for marker in (
+                "timeout",
+                "connection",
+                "connecterror",
+                "temporarily unavailable",
+                "server error",
+                "rate limit",
+                "rate_limit",
+                "connection reset",
+            )
+        )
 
     @staticmethod
     def _validate_summary(data: dict[str, Any], title: str) -> VideoSummary:

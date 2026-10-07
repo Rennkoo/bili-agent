@@ -63,6 +63,8 @@ class Settings:
     asr_candidate_languages: tuple[str, ...] = ()
     asr_rerank_mode: str = "none"
     llm_timeout_seconds: float = 90.0
+    llm_max_retries: int = 2
+    llm_retry_base_seconds: float = 1.0
     max_transcript_chars: int = 24000
     llm_chunk_segments: int = 400
     llm_chunk_concurrency: int = 2
@@ -109,6 +111,8 @@ class Settings:
             if os.getenv("ASR_RERANK_MODE", "none").strip().lower() in {"none", "confidence", "llm"}
             else "none",
             llm_timeout_seconds=_as_float(os.getenv("LLM_TIMEOUT_SECONDS"), 90.0, 1.0),
+            llm_max_retries=_as_int(os.getenv("LLM_MAX_RETRIES"), 2, 0),
+            llm_retry_base_seconds=_as_float(os.getenv("LLM_RETRY_BASE_SECONDS"), 1.0, 0.0),
             max_transcript_chars=_as_int(os.getenv("MAX_TRANSCRIPT_CHARS"), 24000, 1000),
             llm_chunk_segments=_as_int(os.getenv("LLM_CHUNK_SEGMENTS"), 400, 100),
             llm_chunk_concurrency=_as_int(os.getenv("LLM_CHUNK_CONCURRENCY"), 2, 1),
