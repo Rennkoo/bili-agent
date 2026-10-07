@@ -31,3 +31,20 @@ def test_job_store_expires_only_terminal_jobs():
 
     assert jobs.get(finished) is None
     assert jobs.get(running)["status"] == "queued"
+
+
+def test_job_store_requests_cooperative_cancellation():
+    jobs = JobStore()
+    job_id = jobs.create()
+
+    accepted, message = jobs.request_cancel(job_id)
+
+    assert accepted is True
+    assert "停止" in message
+    assert jobs.is_cancel_requested(job_id) is True
+    assert jobs.get(job_id)["status"] == "cancelling"
+
+    jobs.update(job_id, status="cancelled", stage="cancelled", progress=100)
+    accepted, message = jobs.request_cancel(job_id)
+    assert accepted is False
+    assert "结束" in message

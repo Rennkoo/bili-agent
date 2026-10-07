@@ -17,6 +17,8 @@ def test_session_and_job_state_survive_store_recreation():
         first_sessions.add_turn(session_id, "user", "这个视频讲了什么？")
         job_id = first_jobs.create()
         first_jobs.update(job_id, status="completed", stage="complete", progress=100, message="分析完成")
+        cancelled_job_id = first_jobs.create()
+        first_jobs.request_cancel(cancelled_job_id)
         first_storage.close()
 
         second_storage = SQLiteStore(path)
@@ -28,4 +30,5 @@ def test_session_and_job_state_survive_store_recreation():
         assert restored.metadata.title == "测试视频"
         assert second_sessions.history(session_id)[0]["content"] == "这个视频讲了什么？"
         assert second_jobs.get(job_id)["status"] == "completed"
+        assert second_jobs.get(cancelled_job_id)["status"] == "cancelled"
         second_storage.close()

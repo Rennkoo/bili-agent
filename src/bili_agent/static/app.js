@@ -1,4 +1,4 @@
-const state = { sessionId: null, result: null, sessions: [], sessionData: {}, infographicUrl: null, infographicFilename: 'bili-infographic.svg', pendingVideo: '', pendingMetadata: null };
+const state = { sessionId: null, result: null, sessions: [], sessionData: {}, infographicUrl: null, infographicFilename: 'bili-infographic.svg', pendingVideo: '', pendingMetadata: null, jobId: null };
 const $ = (id) => document.getElementById(id);
 const MAX_TRANSCRIPT_ROWS = 240;
 
@@ -279,12 +279,15 @@ async function analyzeSelectedPages() {
     const response = await apiFetch('/api/analyze', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({video, page_indices: pageIndices, enable_asr: $('asr-enabled').checked, enable_multimodal: $('multimodal-enabled').checked}) });
     const created = await response.json();
     if (!response.ok) throw new Error(created.error || '分析失败');
+    state.jobId = created.job_id;
+    $('cancel-analysis').classList.remove('hidden');
     const payload = await waitForJob(created.job_id);
+    if (payload.status === 'cancelled') throw new Error('分析已取消');
     if (payload.status !== 'completed') throw new Error(payload.message || '分析失败');
     const resultPayload = {session_id: payload.session_id, result: payload.result, markdown: payload.markdown};
     renderAnalysis(resultPayload);
   } catch (error) { toast(error.message); }
-  finally { setBusy(button, false, '开始分析'); }
+  finally { state.jobId = null; $('cancel-analysis').classList.add('hidden'); setBusy(button, false, '开始分析'); }
 }
 
 async function waitForJob(jobId) {
@@ -297,8 +300,23 @@ async function waitForJob(jobId) {
       lastMessage = payload.message;
       $('composer-hint').textContent = `${payload.message}${payload.progress ? ` · ${payload.progress}%` : ''}`;
     }
-    if (payload.status === 'completed' || payload.status === 'failed') return payload;
+    if (payload.status === 'completed' || payload.status === 'failed' || payload.status === 'cancelled') return payload;
     await new Promise((resolve) => window.setTimeout(resolve, 700));
+  }
+}
+
+async function cancelAnalysis() {
+  if (!state.jobId) return;
+  const button = $('cancel-analysis');
+  button.disabled = true;
+  try {
+    const response = await apiFetch(`/api/jobs/${encodeURIComponent(state.jobId)}/cancel`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || '停止任务失败');
+    $('composer-hint').textContent = '正在停止分析…';
+  } catch (error) {
+    button.disabled = false;
+    toast(error.message);
   }
 }
 
@@ -348,7 +366,8 @@ function switchSession(sessionId) {
 }
 
 function resetSession() {
-  state.sessionId = null; state.result = null; state.pendingVideo = ''; state.pendingMetadata = null;
+  state.sessionId = null; state.result = null; state.pendingVideo = ''; state.pendingMetadata = null; state.jobId = null;
+  $('cancel-analysis').classList.add('hidden'); $('cancel-analysis').disabled = false;
   $('page-picker-modal').classList.add('hidden');
   $('conversation').innerHTML = `<div class="welcome-block" id="welcome-block"><div class="welcome-kicker">VIDEO RESEARCH DESK</div><h1>把一个视频，<br><em>变成你的知识库。</em></h1><p>输入一个链接，开始这段视频研究。</p><div class="starter-row"><button class="starter" data-question="这个视频主要讲了什么？">概括这个视频 <span>↗</span></button><button class="starter" data-question="视频中最重要的三个知识点是什么？">提取知识点 <span>↗</span></button></div></div>`;
   $('composer-form').classList.remove('hidden'); $('question-form').classList.add('hidden'); $('video-input').value = ''; $('crumb-title').textContent = '新会话'; $('composer-hint').textContent = '先输入视频链接，建立分析会话';
@@ -364,6 +383,7 @@ $('cancel-page-picker').addEventListener('click', closePagePicker);
 $('select-all-pages').addEventListener('click', () => { $('page-list').querySelectorAll('input').forEach((input) => { input.checked = true; }); updatePageSelectionStatus(); });
 $('clear-pages').addEventListener('click', () => { $('page-list').querySelectorAll('input').forEach((input) => { input.checked = false; }); updatePageSelectionStatus(); });
 $('confirm-page-picker').addEventListener('click', analyzeSelectedPages);
+$('cancel-analysis').addEventListener('click', cancelAnalysis);
 $('question-form').addEventListener('submit', (event) => { event.preventDefault(); const value = $('question-input').value.trim(); if (value) ask(value); });
 $('new-session').addEventListener('click', resetSession);
 $('settings-button').addEventListener('click', openSettings);

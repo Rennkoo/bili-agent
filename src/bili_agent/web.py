@@ -32,6 +32,10 @@ ENV_PATH = Path.cwd() / ".env"
 SETTINGS_LOCK = threading.Lock()
 
 
+class JobCancelled(Exception):
+    """Raised at cooperative cancellation checkpoints."""
+
+
 class SessionStore:
     def __init__(
         self,
@@ -138,17 +142,18 @@ class JobStore:
         self._ttl_seconds = max(ttl_seconds, 60)
         self._max_items = max(max_items, 10)
         self._storage = storage
+        self._cancel_requested: set[str] = set()
         self._lock = threading.Lock()
         if self._storage:
             for job_id, updated_at, data_json in self._storage.load_jobs():
                 try:
                     data = json.loads(data_json)
-                    if data.get("status") in {"queued", "running"}:
+                    if data.get("status") in {"queued", "running", "cancelling"}:
                         data.update(
-                            status="failed",
-                            stage="failed",
+                            status="cancelled" if data.get("status") == "cancelling" else "failed",
+                            stage="cancelled" if data.get("status") == "cancelling" else "failed",
                             progress=100,
-                            message="服务重启，任务已中断。",
+                            message="服务重启，任务未完成。",
                         )
                         if self._storage:
                             self._storage.save_job(job_id, updated_at, data)
@@ -164,11 +169,13 @@ class JobStore:
         terminal = {
             job_id
             for job_id, item in self._items.items()
-            if item.get("status") in {"completed", "failed"} and self._updated.get(job_id, 0) < cutoff
+            if item.get("status") in {"completed", "failed", "cancelled"}
+            and self._updated.get(job_id, 0) < cutoff
         }
         for job_id in terminal:
             self._items.pop(job_id, None)
             self._updated.pop(job_id, None)
+            self._cancel_requested.discard(job_id)
         if self._storage:
             self._storage.delete_jobs(list(terminal))
         evicted: list[str] = []
@@ -181,6 +188,7 @@ class JobStore:
             oldest = min(finished, key=self._updated.get)
             self._items.pop(oldest, None)
             self._updated.pop(oldest, None)
+            self._cancel_requested.discard(oldest)
             evicted.append(oldest)
         if self._storage:
             self._storage.delete_jobs(evicted)
@@ -196,6 +204,7 @@ class JobStore:
                 "progress": 0,
                 "message": "等待开始",
             }
+            self._cancel_requested.discard(job_id)
             self._updated[job_id] = time.time()
             if self._storage:
                 self._storage.save_job(job_id, self._updated[job_id], self._items[job_id])
@@ -209,6 +218,26 @@ class JobStore:
                 self._updated[job_id] = time.time()
                 if self._storage:
                     self._storage.save_job(job_id, self._updated[job_id], self._items[job_id])
+
+    def request_cancel(self, job_id: str) -> tuple[bool, str]:
+        """Request cancellation without interrupting a running Python thread."""
+        with self._lock:
+            self._purge_locked()
+            item = self._items.get(job_id)
+            if item is None:
+                return False, "任务不存在。"
+            if item.get("status") in {"completed", "failed", "cancelled"}:
+                return False, "任务已经结束。"
+            self._cancel_requested.add(job_id)
+            item.update(status="cancelling", message="正在停止任务，请稍候…")
+            self._updated[job_id] = time.time()
+            if self._storage:
+                self._storage.save_job(job_id, self._updated[job_id], item)
+            return True, "已请求停止任务。"
+
+    def is_cancel_requested(self, job_id: str) -> bool:
+        with self._lock:
+            return job_id in self._cancel_requested
 
     def get(self, job_id: str) -> dict | None:
         with self._lock:
@@ -361,6 +390,9 @@ class WebHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/analyze":
                 self._analyze(payload)
                 return
+            if parsed.path.startswith("/api/jobs/") and parsed.path.endswith("/cancel"):
+                self._cancel_job(parsed.path.split("/")[3])
+                return
             if parsed.path == "/api/inspect":
                 self._inspect(payload)
                 return
@@ -379,6 +411,16 @@ class WebHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             LOGGER.exception("Web 请求失败。")
             _send_json(self, {"error": str(exc) or "服务处理失败。"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _cancel_job(self, job_id: str) -> None:
+        if not job_id or len(job_id) > 80:
+            raise ValueError("任务 ID 无效。")
+        accepted, message = self.jobs.request_cancel(job_id)
+        if not accepted:
+            status = HTTPStatus.NOT_FOUND if message == "任务不存在。" else HTTPStatus.CONFLICT
+            _send_json(self, {"error": message}, status)
+            return
+        _send_json(self, {"cancel_requested": True, "message": message}, HTTPStatus.ACCEPTED)
 
     def _analyze(self, payload: dict) -> None:
         video = str(payload.get("video", "")).strip()
@@ -492,9 +534,13 @@ class WebHandler(BaseHTTPRequestHandler):
         enable_multimodal: bool,
     ) -> None:
         async def progress(stage: str, percent: int, message: str) -> None:
+            if self.jobs.is_cancel_requested(job_id):
+                raise JobCancelled()
             self.jobs.update(job_id, status="running", stage=stage, progress=percent, message=message)
 
         try:
+            if self.jobs.is_cancel_requested(job_id):
+                raise JobCancelled()
             result = _run(
                 BiliAgent(self.settings).analyze(
                     video,
@@ -504,6 +550,8 @@ class WebHandler(BaseHTTPRequestHandler):
                     progress=progress,
                 )
             )
+            if self.jobs.is_cancel_requested(job_id):
+                raise JobCancelled()
             session_id = self.store.put(result)
             self.jobs.update(
                 job_id,
@@ -514,6 +562,14 @@ class WebHandler(BaseHTTPRequestHandler):
                 session_id=session_id,
                 result=result.model_dump(mode="json"),
                 markdown=render_markdown(result),
+            )
+        except JobCancelled:
+            self.jobs.update(
+                job_id,
+                status="cancelled",
+                stage="cancelled",
+                progress=100,
+                message="任务已取消，未创建分析会话。",
             )
         except Exception as exc:
             LOGGER.exception("后台分析任务失败。")
