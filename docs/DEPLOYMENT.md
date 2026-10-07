@@ -54,11 +54,13 @@ curl http://127.0.0.1:8765/api/health
 docker compose logs -f --tail=200 bili-agent
 \`\`\`
 
-预期健康响应：
+预期健康响应（字段可能随版本增加）：
 
 \`\`\`json
-{"status":"ok","llm_configured":true}
+{"status":"ok","ready":true,"version":"0.1.0","llm_configured":true,"capabilities":{"asr":true,"yt_dlp":true,"ffmpeg":true,"vision":false},"warnings":[]}
 \`\`\`
+
+\`ready=false\` 表示持久化目录不可写，应先检查 \`STORAGE_DB_PATH\` 或挂载卷权限。\`warnings\` 中的 LLM、ASR 或视觉提示通常是能力降级，不会阻止服务启动。
 
 ## 3. HTTPS 与访问控制
 

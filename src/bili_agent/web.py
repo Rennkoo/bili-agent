@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, unquote, urljoin, urlparse
 from .agent import BiliAgent
 from .asr import AudioDownloadError, AudioDownloader
 from .config import Settings
+from .diagnostics import runtime_diagnostics
 from .infographic import render_infographic
 from .markdown import render_markdown
 from .models import AnalysisResult
@@ -317,14 +318,7 @@ class WebHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/api/health":
-            _send_json(
-                self,
-                {
-                    "status": "ok",
-                    "llm_configured": bool(self.settings.llm_api_key),
-                    "auth_required": bool(self.settings.web_auth_token),
-                },
-            )
+            _send_json(self, runtime_diagnostics(self.settings))
             return
         if parsed.path.startswith("/api/") and parsed.path != "/api/cover" and not self._require_auth():
             return
@@ -448,10 +442,19 @@ class WebHandler(BaseHTTPRequestHandler):
         clear_key = bool(payload.get("clear_api_key", False))
         if not base_url:
             base_url = "https://api.openai.com/v1"
+        if any(char in base_url for char in "\r\n"):
+            raise ValueError("Base URL 不能包含换行符。")
+        parsed_base_url = urlparse(base_url)
+        if parsed_base_url.scheme not in {"http", "https"} or not parsed_base_url.netloc:
+            raise ValueError("Base URL 必须是有效的 http(s) 地址。")
         if not model:
             raise ValueError("模型名不能为空。")
+        if any(char in model for char in "\r\n"):
+            raise ValueError("模型名不能包含换行符。")
         if api_key is not None and not isinstance(api_key, str):
             raise ValueError("API Key 必须是文本。")
+        if isinstance(api_key, str) and any(char in api_key for char in "\r\n"):
+            raise ValueError("API Key 不能包含换行符。")
         with SETTINGS_LOCK:
             next_key = None if clear_key else (api_key.strip() if isinstance(api_key, str) and api_key.strip() else self.settings.llm_api_key)
             next_settings = replace(

@@ -36,6 +36,10 @@ bili-agent = "bili_agent.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+bili_agent = ["static/*.html", "static/*.css", "static/*.js"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 asyncio_mode = "auto"
+testpaths = ["tests"]
