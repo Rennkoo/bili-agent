@@ -5,6 +5,8 @@ __pycache__
 *.py[cod]
 .pytest_cache
 .bili-agent
+data
+backups
 work
 runtime-deps
 pip-temp2

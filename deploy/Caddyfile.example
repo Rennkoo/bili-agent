@@ -1,0 +1,14 @@
+video.example.com {
+    encode zstd gzip
+
+    # Generate with: caddy hash-password --plaintext 'replace-this-password'
+    basic_auth {
+        analyst REPLACE_WITH_CADDY_PASSWORD_HASH
+    }
+
+    request_body {
+        max_size 2MB
+    }
+
+    reverse_proxy 127.0.0.1:8765
+}

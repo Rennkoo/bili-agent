@@ -6,6 +6,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .bili-agent/
+data/
 work/
 runtime-deps/
 pip-temp2/

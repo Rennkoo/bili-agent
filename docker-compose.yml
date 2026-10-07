@@ -4,16 +4,29 @@ services:
       context: .
     image: bili-agent:local
     restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: ${BILI_AGENT_MEMORY_LIMIT:-6g}
+    cpus: ${BILI_AGENT_CPU_LIMIT:-2.0}
+    pids_limit: 256
+    stop_grace_period: 30s
     env_file:
       - .env
     environment:
+      STORAGE_DB_PATH: /data/bili-agent.sqlite3
       ASR_CACHE_DIR: /data/audio
       MEDIA_CACHE_DIR: /data/media
     ports:
       - "127.0.0.1:8765:8765"
     volumes:
-      - bili-agent-data:/data
+      - ./data:/data
       - ./.env:/app/.env
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
     healthcheck:
       test:
         - CMD
@@ -24,6 +37,3 @@ services:
       timeout: 8s
       retries: 3
       start_period: 30s
-
-volumes:
-  bili-agent-data:
