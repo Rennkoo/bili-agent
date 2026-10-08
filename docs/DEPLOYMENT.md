@@ -64,6 +64,14 @@ docker compose logs --tail=200 bili-agent
 
 健康响应重点看 `ready: true`、`llm_configured: true`、`capabilities.asr` 和 `capabilities.ffmpeg`。`warnings` 是能力降级提示，不一定表示启动失败。
 
+也可以使用仓库中的一键初始化脚本。它会安装 Docker CE/Compose、拉取 `main`、生成 `/opt/bili-agent/.env` 并启动轻量模式；脚本针对本服务器的 1 GiB 内存默认关闭 ASR 和视觉依赖：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Rennkoo/bili-agent/main/deploy/bootstrap.sh | sudo bash
+```
+
+首次上线后，服务只绑定服务器本机的 `127.0.0.1:8765`，完成域名和 HTTPS 配置后再开放公网访问。
+
 ## 3. HTTPS 和双层鉴权
 
 仓库提供 `deploy/Caddyfile.example`。Caddy 负责 HTTPS 和第一层登录，应用的 `WEB_AUTH_TOKEN` 负责第二层 Bearer Token 保护。

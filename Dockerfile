@@ -12,8 +12,9 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src ./src
 
+ARG BILI_AGENT_EXTRAS=asr,vision
 RUN python -m pip install --upgrade pip \
-    && python -m pip install ".[asr,vision]"
+    && if [ -n "$BILI_AGENT_EXTRAS" ]; then python -m pip install ".[${BILI_AGENT_EXTRAS}]"; else python -m pip install .; fi
 
 EXPOSE 8765
 VOLUME ["/data"]

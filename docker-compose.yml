@@ -2,6 +2,8 @@ services:
   bili-agent:
     build:
       context: .
+      args:
+        BILI_AGENT_EXTRAS: "${BILI_AGENT_EXTRAS-asr,vision}"
     image: bili-agent:local
     restart: unless-stopped
     init: true
