@@ -756,8 +756,9 @@ class WebHandler(BaseHTTPRequestHandler):
 
     def _serve_static(self, path: str) -> None:
         relative = unquote(path.removeprefix("/")) or "index.html"
-        requested = (STATIC_DIR / relative).resolve()
-        if STATIC_DIR not in requested.parents and requested != STATIC_DIR:
+        static_root = STATIC_DIR.resolve()
+        requested = (static_root / relative).resolve()
+        if static_root not in requested.parents and requested != static_root:
             _send_json(self, {"error": "无效路径。"}, HTTPStatus.NOT_FOUND)
             return
         if not requested.is_file():
