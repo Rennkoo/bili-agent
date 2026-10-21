@@ -9,6 +9,7 @@ from pathlib import Path
 from . import __version__
 from .agent import BiliAgent
 from .config import Settings
+from .diagnostics import runtime_diagnostics
 from .markdown import render_markdown
 
 
@@ -38,11 +39,37 @@ def _parser() -> argparse.ArgumentParser:
     web.add_argument("--host", default="127.0.0.1", help="监听地址，默认 127.0.0.1。")
     web.add_argument("--port", type=int, default=8765, help="监听端口，默认 8765。")
     web.add_argument("--open", action="store_true", help="启动后自动打开浏览器。")
+
+    doctor = sub.add_parser("doctor", help="检查运行环境与可用能力，不会输出密钥。")
+    doctor.add_argument("--json", action="store_true", help="以 JSON 格式输出诊断结果。")
     return parser
+
+
+def _print_diagnostics(diagnostics: dict, as_json: bool = False) -> None:
+    if as_json:
+        print(json.dumps(diagnostics, ensure_ascii=False, indent=2))
+        return
+    print(f"bili-agent {diagnostics['version']} 运行诊断")
+    print(f"Python: {diagnostics['python']}")
+    print(f"LLM: {'已配置' if diagnostics['llm_configured'] else '未配置（使用降级模式）'}")
+    print(f"存储: {'可写' if diagnostics['storage']['writable'] else '不可写'}")
+    labels = {"asr": "ASR", "yt_dlp": "yt-dlp", "ffmpeg": "ffmpeg", "vision": "视觉依赖"}
+    for key, label in labels.items():
+        print(f"{label}: {'可用' if diagnostics['capabilities'][key] else '不可用'}")
+    if diagnostics["warnings"]:
+        print("提示:")
+        for warning in diagnostics["warnings"]:
+            print(f"- {warning}")
+    else:
+        print("提示: 无")
 
 
 async def _run(args: argparse.Namespace) -> int:
     settings = Settings.from_env(args.env_file)
+    if args.command == "doctor":
+        diagnostics = runtime_diagnostics(settings)
+        _print_diagnostics(diagnostics, as_json=args.json)
+        return 0 if diagnostics["ready"] else 1
     agent = BiliAgent(settings)
     enable_asr = True if getattr(args, "enable_asr", False) else None
     enable_multimodal = True if getattr(args, "enable_multimodal", False) else None

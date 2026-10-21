@@ -73,6 +73,15 @@ VISION_MODEL=
 
 `STORAGE_DB_PATH` 指定本地 SQLite 文件。默认位于 `.bili-agent/bili-agent.sqlite3`，已被 Git 忽略；服务重启后会恢复已保存的会话和任务状态。
 
+启动分析或面板前可以先运行环境诊断：
+
+```powershell
+python -m bili_agent doctor
+python -m bili_agent doctor --json
+```
+
+诊断只输出 Python、依赖能力、LLM 是否已配置、存储是否可写和降级提示，不输出 API Key、Cookie 或 Token 明文。`doctor` 返回非零状态仅表示持久化目录不可写；缺少 LLM、ASR 或视觉依赖会作为提示展示，不会阻止字幕模式运行。
+
 长视频字幕获取采用受控并发，并按分P更新进度。可通过 `CAPTION_TIMEOUT_SECONDS` 和 `MAX_CONCURRENT_CAPTION_FETCHES` 调整单P超时与并发数；遇到单个分P失败时会跳过该P并继续后续分析。启用 ASR 时，面板会显示音频下载和转写阶段；`ASR_TIMEOUT_SECONDS` 控制单个分P的 ASR 总超时时间，超时后自动保留无字幕降级结果。
 
 ASR 阶段会持续报告音频下载、转写心跳和已处理时长。长音频的进度范围约为 `42%~70%`，因此看到几十秒没有新识别片段时，任务仍会继续运行；只有进入 `70%` 才表示语音内容已经整理完毕。

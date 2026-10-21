@@ -52,6 +52,9 @@ bili-agent ask "BV1xx411c7mD" "视频中提到的主要方法是什么？"
 
 # 启动聊天面板
 bili-agent web --open
+
+# 启动前检查依赖和配置（不会输出 API Key 或 Cookie）
+bili-agent doctor
 ```
 
 面板会先读取视频信息和分P列表，再让你选择需要分析的分P；长视频默认不勾选全部分P，确认选择后才开始字幕、ASR、视觉和总结流程。
@@ -95,6 +98,8 @@ src/bili_agent/
 `bilibili-api-python` 是异步库，负责视频信息和分 P 获取；CC 字幕的实际内容来自播放器字幕数据，适配层会优先尝试库中可用的播放器 helper，再使用同一视频凭据访问播放器接口。B 站接口和字幕权限可能随时间变化，程序会将单个分 P 的失败记录为日志并继续处理其他分 P。
 
 更完整的安装、命令参数、配置项和故障排查请参阅 [docs/USAGE.md](docs/USAGE.md)。
+
+现场演示、录屏流程和三类视频验收步骤请参阅 [docs/DEMO.md](docs/DEMO.md)。
 
 功能边界、已完成能力和后续优化优先级请参阅 [docs/ROADMAP.md](docs/ROADMAP.md)。
 
