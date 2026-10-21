@@ -72,6 +72,24 @@ curl -fsSL https://raw.githubusercontent.com/Rennkoo/bili-agent/main/deploy/boot
 
 首次上线后，服务只绑定服务器本机的 `127.0.0.1:8765`，完成域名和 HTTPS 配置后再开放公网访问。
 
+### 临时使用公网 IP
+
+没有域名时，可以临时使用仓库中的 `deploy/enable-ip-access.sh`。该脚本会生成 Bearer Token、把服务绑定到 `0.0.0.0:8765`，并尝试配置系统防火墙：
+
+```bash
+cd /opt/bili-agent
+sudo bash deploy/enable-ip-access.sh
+sudo cat /root/bili-agent-web-token.txt
+```
+
+然后在阿里云轻量服务器防火墙中放行 TCP `8765`，访问：
+
+```text
+http://47.116.60.69:8765/
+```
+
+这是临时 HTTP 方案，浏览器会提示输入 Token，不能用于长期生产环境。正式上线应改用域名、Caddy HTTPS，并关闭公网 `8765` 端口。
+
 ## 3. HTTPS 和双层鉴权
 
 仓库提供 `deploy/Caddyfile.example`。Caddy 负责 HTTPS 和第一层登录，应用的 `WEB_AUTH_TOKEN` 负责第二层 Bearer Token 保护。
